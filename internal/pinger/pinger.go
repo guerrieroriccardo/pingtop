@@ -88,7 +88,13 @@ func (p *Pinger) Run(ctx context.Context) error {
 			cancel()
 			return
 		}
-		p.emit(pCtx, snapshot(0, nil))
+		// Emit with sent-1 so loss% reflects the settled outcome of
+		// prior packets, not the just-sent (in-flight) one. Otherwise
+		// the display flickers between 0% and (1/N)*100% on every
+		// send tick as sent leads recv by one packet.
+		u := snapshot(0, nil)
+		u.Sent = n - 1
+		p.emit(pCtx, u)
 	}
 	pp.OnRecv = func(pkt *probing.Packet) {
 		recv.Add(1)
