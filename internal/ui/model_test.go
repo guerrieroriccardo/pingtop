@@ -80,6 +80,28 @@ func TestUpdateApplyingStatsMsg(t *testing.T) {
 	}
 }
 
+func TestUpdateRemovesDroppedTarget(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate, 4)
+	m := New([]string{"1.1.1.1", "8.8.8.8", "9.9.9.9"}, updates)
+
+	mm, _ := m.Update(statsMsg{TargetID: "8.8.8.8", Dropped: true})
+	out := mm.(Model)
+
+	if len(out.order) != 2 || out.order[0] != "1.1.1.1" || out.order[1] != "9.9.9.9" {
+		t.Errorf("order should be [1.1.1.1 9.9.9.9], got %v", out.order)
+	}
+	if _, ok := out.stats["8.8.8.8"]; ok {
+		t.Errorf("stats for dropped target should be removed")
+	}
+	view := out.View()
+	if strings.Contains(view, "8.8.8.8") {
+		t.Errorf("view should not show dropped target:\n%s", view)
+	}
+	if !strings.Contains(view, "1.1.1.1") || !strings.Contains(view, "9.9.9.9") {
+		t.Errorf("view should still show survivors:\n%s", view)
+	}
+}
+
 func TestUpdateQuitOnKey(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate)
 	m := New([]string{"1.1.1.1"}, updates)

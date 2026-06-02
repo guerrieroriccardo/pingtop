@@ -27,6 +27,9 @@ func run() error {
 	var maxHosts int
 	flag.IntVar(&maxHosts, "max-hosts", 256, "hard cap on the number of expanded targets")
 	flag.IntVar(&maxHosts, "m", 256, "alias for --max-hosts")
+	var drop int
+	flag.IntVar(&drop, "drop", 0, "drop a target after this many sends with no replies (0=disabled)")
+	flag.IntVar(&drop, "d", 0, "alias for --drop")
 	size := flag.Int("size", 24, "ICMP payload size in bytes")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: pingtop [flags] <target>...\n\n")
@@ -69,6 +72,7 @@ func run() error {
 			Mode:     mode,
 			Interval: *interval,
 			Size:     *size,
+			Drop:     drop,
 			Updates:  updates,
 		}
 		wg.Add(1)

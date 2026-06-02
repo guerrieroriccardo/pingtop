@@ -19,10 +19,11 @@ type statsMsg pinger.StatsUpdate
 // Model is the dashboard state. Construct it with New, then pass it to
 // tea.NewProgram.
 type Model struct {
-	order   []string
-	updates <-chan pinger.StatsUpdate
-	table   table.Model
-	stats   map[string]pinger.StatsUpdate
+	order      []string
+	updates    <-chan pinger.StatsUpdate
+	table      table.Model
+	stats      map[string]pinger.StatsUpdate
+	termHeight int // last WindowSizeMsg height, used to re-clamp on drop
 }
 
 // New builds the initial model. ids is the stable display order
@@ -84,6 +85,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case statsMsg:
+		if msg.Dropped {
+			delete(m.stats, msg.TargetID)
+			m.order = removeID(m.order, msg.TargetID)
+			m.table.SetRows(buildRows(m.order, m.stats))
+			if m.termHeight > 0 {
+				m.table.SetHeight(clampHeight(m.termHeight, len(m.order)))
+			}
+			return m, m.waitForUpdate()
+		}
 		m.stats[msg.TargetID] = pinger.StatsUpdate(msg)
 		m.table.SetRows(buildRows(m.order, m.stats))
 		return m, m.waitForUpdate()
@@ -98,18 +108,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.WindowSizeMsg:
-		// bubbles/table interprets SetHeight as total widget height
-		// (header included). The header renders to headerLines lines,
-		// so each data row needs one additional line. Leave one line
-		// at the bottom for the help text.
-		h := msg.Height - 1
-		if h < headerLines+1 {
-			h = headerLines + 1
-		}
-		if max := len(m.order) + headerLines; h > max {
-			h = max
-		}
-		m.table.SetHeight(h)
+		m.termHeight = msg.Height
+		m.table.SetHeight(clampHeight(m.termHeight, len(m.order)))
 		return m, nil
 	}
 	return m, nil
@@ -165,4 +165,28 @@ func initialHeight(n int) int {
 		return headerLines + 1
 	}
 	return n + headerLines
+}
+
+// clampHeight returns a SetHeight value bounded by the terminal height
+// (minus one line for the help text) and the actual row count, so the
+// table neither overflows the screen nor reserves empty rows below
+// surviving targets after a drop.
+func clampHeight(termHeight, rows int) int {
+	h := termHeight - 1
+	if h < headerLines+1 {
+		h = headerLines + 1
+	}
+	if max := rows + headerLines; h > max {
+		h = max
+	}
+	return h
+}
+
+func removeID(order []string, id string) []string {
+	for i, s := range order {
+		if s == id {
+			return append(order[:i], order[i+1:]...)
+		}
+	}
+	return order
 }

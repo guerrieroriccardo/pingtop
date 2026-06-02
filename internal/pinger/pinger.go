@@ -22,6 +22,7 @@ type StatsUpdate struct {
 	Recv     int64
 	RTT      time.Duration // most recent successful sample; zero if N/A
 	LastErr  error         // sticky last error for display; nil on success
+	Dropped  bool          // pinger has stopped; UI should remove this target
 }
 
 // Pinger runs a continuous ICMP echo loop against a single target and
@@ -32,6 +33,7 @@ type Pinger struct {
 	Mode     Mode
 	Interval time.Duration
 	Size     int
+	Drop     int // >0: drop target after this many sends with zero recvs
 	Updates  chan<- StatsUpdate
 }
 
@@ -55,6 +57,11 @@ func (p *Pinger) Run(ctx context.Context) error {
 	pp.RecordRtts = false
 	pp.SetPrivileged(p.Mode == ModePrivileged)
 
+	// pCtx lets the pinger stop itself (on drop) without waiting for
+	// the parent ctx, while still inheriting cancellation from it.
+	pCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	var sent, recv atomic.Int64
 	snapshot := func(rtt time.Duration, lastErr error) StatsUpdate {
 		return StatsUpdate{
@@ -67,12 +74,19 @@ func (p *Pinger) Run(ctx context.Context) error {
 	}
 
 	pp.OnSend = func(*probing.Packet) {
-		sent.Add(1)
-		p.emit(ctx, snapshot(0, nil))
+		n := sent.Add(1)
+		if p.Drop > 0 && n >= int64(p.Drop) && recv.Load() == 0 {
+			u := snapshot(0, nil)
+			u.Dropped = true
+			p.emit(pCtx, u)
+			cancel()
+			return
+		}
+		p.emit(pCtx, snapshot(0, nil))
 	}
 	pp.OnRecv = func(pkt *probing.Packet) {
 		recv.Add(1)
-		p.emit(ctx, snapshot(pkt.Rtt, nil))
+		p.emit(pCtx, snapshot(pkt.Rtt, nil))
 	}
 	pp.OnRecvError = func(err error) {
 		// pro-bing's recv loop fires OnRecvError on every read
@@ -82,16 +96,16 @@ func (p *Pinger) Run(ctx context.Context) error {
 		if errors.Is(err, os.ErrDeadlineExceeded) {
 			return
 		}
-		p.emit(ctx, snapshot(0, err))
+		p.emit(pCtx, snapshot(0, err))
 	}
 	pp.OnSendError = func(_ *probing.Packet, err error) {
-		p.emit(ctx, snapshot(0, err))
+		p.emit(pCtx, snapshot(0, err))
 	}
 
 	// pro-bing.Run() blocks until Stop is called. Translate ctx cancel
 	// into Stop, then let Run return naturally.
 	go func() {
-		<-ctx.Done()
+		<-pCtx.Done()
 		pp.Stop()
 	}()
 	return pp.Run()
