@@ -24,7 +24,9 @@ func main() {
 
 func run() error {
 	interval := flag.Duration("i", time.Second, "interval between pings")
-	maxHosts := flag.Int("max-hosts", 256, "hard cap on the number of expanded targets")
+	var maxHosts int
+	flag.IntVar(&maxHosts, "max-hosts", 256, "hard cap on the number of expanded targets")
+	flag.IntVar(&maxHosts, "m", 256, "alias for --max-hosts")
 	size := flag.Int("size", 24, "ICMP payload size in bytes")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: pingtop [flags] <target>...\n\n")
@@ -43,7 +45,7 @@ func run() error {
 		return err
 	}
 
-	targets, err := target.Expand(flag.Args(), *maxHosts)
+	targets, err := target.Expand(flag.Args(), maxHosts)
 	if err != nil {
 		return err
 	}
