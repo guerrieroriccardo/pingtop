@@ -24,9 +24,10 @@ type Model struct {
 	updates    <-chan pinger.StatsUpdate
 	table      table.Model
 	stats      map[string]pinger.StatsUpdate
-	termHeight int    // last WindowSizeMsg height, used to re-clamp on drop
-	filterMode bool   // true while user is typing into the filter
-	filter     string // active filter; empty == no filter
+	history    map[string][]time.Duration // per-target RTT ring buffer for the sparkline
+	termHeight int                        // last WindowSizeMsg height, used to re-clamp on drop
+	filterMode bool                       // true while user is typing into the filter
+	filter     string                     // active filter; empty == no filter
 }
 
 // New builds the initial model. ids is the stable display order
@@ -39,10 +40,11 @@ func New(ids []string, updates <-chan pinger.StatsUpdate) Model {
 		{Title: "JITTER", Width: 10},
 		{Title: "LOSS%", Width: 8},
 		{Title: "SENT/LOST", Width: 12},
+		{Title: "SPARK", Width: sparkWidth + 2},
 	}
 	t := table.New(
 		table.WithColumns(columns),
-		table.WithRows(buildRows(ids, nil)),
+		table.WithRows(buildRows(ids, nil, nil)),
 		table.WithFocused(true),
 		table.WithHeight(initialHeight(len(ids))),
 	)
@@ -64,6 +66,7 @@ func New(ids []string, updates <-chan pinger.StatsUpdate) Model {
 		updates: updates,
 		table:   t,
 		stats:   make(map[string]pinger.StatsUpdate, len(ids)),
+		history: make(map[string][]time.Duration, len(ids)),
 	}
 }
 
@@ -92,11 +95,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statsMsg:
 		if msg.Dropped {
 			delete(m.stats, msg.TargetID)
+			delete(m.history, msg.TargetID)
 			m.order = removeID(m.order, msg.TargetID)
 			refresh(&m)
 			return m, m.waitForUpdate()
 		}
 		m.stats[msg.TargetID] = pinger.StatsUpdate(msg)
+		if msg.RTT > 0 {
+			appendHistory(m.history, msg.TargetID, msg.RTT)
+		}
 		refresh(&m)
 		return m, m.waitForUpdate()
 
@@ -188,7 +195,7 @@ func (m Model) visibleIDs() []string {
 // need its internal state updates to stick on the caller's Model.
 func refresh(m *Model) {
 	v := m.visibleIDs()
-	m.table.SetRows(buildRows(v, m.stats))
+	m.table.SetRows(buildRows(v, m.stats, m.history))
 	if m.termHeight > 0 {
 		m.table.SetHeight(clampHeight(m.termHeight, len(v)))
 	}
@@ -196,15 +203,15 @@ func refresh(m *Model) {
 
 // buildRows produces table rows in the stable order. A nil stats map
 // renders all targets in their initial "no data yet" state.
-func buildRows(order []string, stats map[string]pinger.StatsUpdate) []table.Row {
+func buildRows(order []string, stats map[string]pinger.StatsUpdate, history map[string][]time.Duration) []table.Row {
 	rows := make([]table.Row, len(order))
 	for i, id := range order {
 		s, ok := stats[id]
 		if !ok {
-			rows[i] = table.Row{id, "—", "—", "—", "—"}
+			rows[i] = table.Row{id, "—", "—", "—", "—", formatSpark(nil)}
 			continue
 		}
-		rows[i] = table.Row{id, formatRTT(s), formatJitter(s), formatLoss(s), formatSentLost(s)}
+		rows[i] = table.Row{id, formatRTT(s), formatJitter(s), formatLoss(s), formatSentLost(s), formatSpark(history[id])}
 	}
 	return rows
 }
@@ -279,4 +286,59 @@ func removeID(order []string, id string) []string {
 		}
 	}
 	return order
+}
+
+// sparkWidth is the number of recent RTT samples shown in the SPARK
+// column. At a 1 s interval this is also the seconds of visible history.
+const sparkWidth = 20
+
+// sparkBars is the 8-level Unicode bar set used to render samples.
+var sparkBars = []rune("▁▂▃▄▅▆▇█")
+
+func appendHistory(h map[string][]time.Duration, id string, rtt time.Duration) {
+	buf := h[id]
+	if len(buf) >= sparkWidth {
+		buf = buf[1:]
+	}
+	h[id] = append(buf, rtt)
+}
+
+// formatSpark renders the recent RTT samples as a Unicode bar chart,
+// scaled per-target between the window's min and max so relative
+// jitter is what's visible. Pads with leading spaces until the buffer
+// fills, so the latest sample is always at the right edge.
+func formatSpark(history []time.Duration) string {
+	if len(history) == 0 {
+		return strings.Repeat(" ", sparkWidth)
+	}
+	min, max := history[0], history[0]
+	for _, d := range history[1:] {
+		if d < min {
+			min = d
+		}
+		if d > max {
+			max = d
+		}
+	}
+	rng := max - min
+
+	var b strings.Builder
+	b.Grow(sparkWidth * 4) // bars are 3-byte UTF-8 runes
+	for i := 0; i < sparkWidth-len(history); i++ {
+		b.WriteByte(' ')
+	}
+	for _, d := range history {
+		idx := len(sparkBars) / 2
+		if rng > 0 {
+			idx = int(int64(d-min) * int64(len(sparkBars)-1) / int64(rng))
+			if idx < 0 {
+				idx = 0
+			}
+			if idx >= len(sparkBars) {
+				idx = len(sparkBars) - 1
+			}
+		}
+		b.WriteRune(sparkBars[idx])
+	}
+	return b.String()
 }

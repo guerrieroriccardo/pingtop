@@ -87,7 +87,7 @@ func TestFormatSentLost(t *testing.T) {
 }
 
 func TestBuildRowsInitial(t *testing.T) {
-	rows := buildRows([]string{"1.1.1.1", "8.8.8.8"}, nil)
+	rows := buildRows([]string{"1.1.1.1", "8.8.8.8"}, nil, nil)
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
@@ -95,7 +95,7 @@ func TestBuildRowsInitial(t *testing.T) {
 		t.Errorf("rows lost their order: %v", rows)
 	}
 	for _, r := range rows {
-		if len(r) != 5 || r[1] != "—" || r[2] != "—" || r[3] != "—" || r[4] != "—" {
+		if len(r) != 6 || r[1] != "—" || r[2] != "—" || r[3] != "—" || r[4] != "—" {
 			t.Errorf("expected placeholders, got %v", r)
 		}
 	}
@@ -194,6 +194,71 @@ func TestFilterCaseInsensitive(t *testing.T) {
 	v := m.visibleIDs()
 	if len(v) != 1 || v[0] != "host-A.example" {
 		t.Errorf("expected [host-A.example] for filter %q, got %v", m.filter, v)
+	}
+}
+
+func TestFormatSparkEmpty(t *testing.T) {
+	got := formatSpark(nil)
+	if got != strings.Repeat(" ", sparkWidth) {
+		t.Errorf("empty history should render as %d spaces, got %q", sparkWidth, got)
+	}
+}
+
+func TestFormatSparkAllEqual(t *testing.T) {
+	h := []time.Duration{10 * time.Millisecond, 10 * time.Millisecond, 10 * time.Millisecond}
+	got := formatSpark(h)
+	mid := string(sparkBars[len(sparkBars)/2])
+	// Three middle bars, padded on the left to sparkWidth.
+	want := strings.Repeat(" ", sparkWidth-3) + strings.Repeat(mid, 3)
+	if got != want {
+		t.Errorf("equal samples should all map to middle bar\n got=%q\nwant=%q", got, want)
+	}
+}
+
+func TestFormatSparkScalesMinMax(t *testing.T) {
+	h := []time.Duration{1 * time.Millisecond, 50 * time.Millisecond, 100 * time.Millisecond}
+	got := formatSpark(h)
+	runes := []rune(got)
+	// Last three runes are the data; min should be first bar, max should be last bar.
+	last3 := runes[len(runes)-3:]
+	if last3[0] != sparkBars[0] {
+		t.Errorf("min sample should map to %c, got %c", sparkBars[0], last3[0])
+	}
+	if last3[2] != sparkBars[len(sparkBars)-1] {
+		t.Errorf("max sample should map to %c, got %c", sparkBars[len(sparkBars)-1], last3[2])
+	}
+}
+
+func TestAppendHistoryRingBuffer(t *testing.T) {
+	h := make(map[string][]time.Duration)
+	for i := 0; i < sparkWidth+5; i++ {
+		appendHistory(h, "x", time.Duration(i)*time.Millisecond)
+	}
+	if len(h["x"]) != sparkWidth {
+		t.Errorf("history should cap at %d samples, got %d", sparkWidth, len(h["x"]))
+	}
+	// The oldest 5 samples should have been evicted; the buffer's first
+	// sample should be sample #5 (zero-indexed).
+	if h["x"][0] != 5*time.Millisecond {
+		t.Errorf("oldest sample should be 5ms, got %v", h["x"][0])
+	}
+}
+
+func TestUpdateAppendsHistoryOnRTT(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate, 4)
+	m := New([]string{"1.1.1.1"}, updates)
+
+	mm, _ := m.Update(statsMsg{TargetID: "1.1.1.1", Sent: 1, Recv: 1, RTT: 3 * time.Millisecond})
+	out := mm.(Model)
+	if len(out.history["1.1.1.1"]) != 1 || out.history["1.1.1.1"][0] != 3*time.Millisecond {
+		t.Errorf("expected one 3ms sample, got %v", out.history["1.1.1.1"])
+	}
+
+	// An RTT=0 message (OnSend snapshot) should NOT append.
+	mm, _ = out.Update(statsMsg{TargetID: "1.1.1.1", Sent: 2, Recv: 1, RTT: 0})
+	out = mm.(Model)
+	if len(out.history["1.1.1.1"]) != 1 {
+		t.Errorf("RTT=0 message should not append, got %v", out.history["1.1.1.1"])
 	}
 }
 
