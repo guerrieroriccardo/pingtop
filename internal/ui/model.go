@@ -98,12 +98,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.WindowSizeMsg:
-		// Leave two lines for the header + one for the help line.
-		h := msg.Height - 3
-		if h < 3 {
-			h = 3
+		// bubbles/table interprets SetHeight as total widget height
+		// (header included). The header renders to headerLines lines,
+		// so each data row needs one additional line. Leave one line
+		// at the bottom for the help text.
+		h := msg.Height - 1
+		if h < headerLines+1 {
+			h = headerLines + 1
 		}
-		if max := len(m.order) + 1; h > max {
+		if max := len(m.order) + headerLines; h > max {
 			h = max
 		}
 		m.table.SetHeight(h)
@@ -152,10 +155,14 @@ func formatLoss(s pinger.StatsUpdate) string {
 	return fmt.Sprintf("%.1f%%", pct)
 }
 
+// headerLines is the rendered height of bubbles/table's header
+// (title row + border-bottom). SetHeight values must add this on top
+// of the desired data-row count.
+const headerLines = 2
+
 func initialHeight(n int) int {
-	const minRows = 3
-	if n < minRows {
-		return minRows + 1
+	if n < 1 {
+		return headerLines + 1
 	}
-	return n + 1
+	return n + headerLines
 }
