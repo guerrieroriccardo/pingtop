@@ -21,6 +21,7 @@ type StatsUpdate struct {
 	Sent     int64
 	Recv     int64
 	RTT      time.Duration // most recent successful sample; zero if N/A
+	Jitter   time.Duration // RFC 3550 smoothed inter-packet jitter; zero until 2nd reply
 	LastErr  error         // sticky last error for display; nil on success
 	Dropped  bool          // pinger has stopped; UI should remove this target
 }
@@ -63,12 +64,17 @@ func (p *Pinger) Run(ctx context.Context) error {
 	defer cancel()
 
 	var sent, recv atomic.Int64
+	// prevRTT/jitter are written only from OnRecv (pro-bing's recv loop
+	// is single-goroutine) but read from OnSend's snapshot, so atomics
+	// are still the right choice.
+	var prevRTT, jitter atomic.Int64
 	snapshot := func(rtt time.Duration, lastErr error) StatsUpdate {
 		return StatsUpdate{
 			TargetID: p.ID,
 			Sent:     sent.Load(),
 			Recv:     recv.Load(),
 			RTT:      rtt,
+			Jitter:   time.Duration(jitter.Load()),
 			LastErr:  lastErr,
 		}
 	}
@@ -86,6 +92,17 @@ func (p *Pinger) Run(ctx context.Context) error {
 	}
 	pp.OnRecv = func(pkt *probing.Packet) {
 		recv.Add(1)
+		// RFC 3550 smoothed jitter: J = J + (|D| - J)/16. Skip the
+		// first reply (prev == 0), where the delta is undefined.
+		prev := time.Duration(prevRTT.Swap(int64(pkt.Rtt)))
+		if prev > 0 {
+			d := pkt.Rtt - prev
+			if d < 0 {
+				d = -d
+			}
+			j := time.Duration(jitter.Load())
+			jitter.Store(int64(j + (d-j)/16))
+		}
 		p.emit(pCtx, snapshot(pkt.Rtt, nil))
 	}
 	pp.OnRecvError = func(err error) {

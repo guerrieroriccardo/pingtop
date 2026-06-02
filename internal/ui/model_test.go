@@ -30,6 +30,24 @@ func TestFormatRTT(t *testing.T) {
 	}
 }
 
+func TestFormatJitter(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		s    pinger.StatsUpdate
+		want string
+	}{
+		{"no data", pinger.StatsUpdate{}, "—"},
+		{"with jitter", pinger.StatsUpdate{Jitter: 750 * time.Microsecond}, "750µs"},
+		{"err has no effect", pinger.StatsUpdate{LastErr: errors.New("boom")}, "—"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatJitter(tc.s); got != tc.want {
+				t.Errorf("formatJitter = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFormatLoss(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -58,7 +76,7 @@ func TestBuildRowsInitial(t *testing.T) {
 		t.Errorf("rows lost their order: %v", rows)
 	}
 	for _, r := range rows {
-		if r[1] != "—" || r[2] != "—" {
+		if len(r) != 4 || r[1] != "—" || r[2] != "—" || r[3] != "—" {
 			t.Errorf("expected placeholders, got %v", r)
 		}
 	}

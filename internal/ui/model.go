@@ -33,6 +33,7 @@ func New(ids []string, updates <-chan pinger.StatsUpdate) Model {
 	columns := []table.Column{
 		{Title: "TARGET", Width: 28},
 		{Title: "RTT", Width: 12},
+		{Title: "JITTER", Width: 10},
 		{Title: "LOSS%", Width: 8},
 	}
 	t := table.New(
@@ -129,10 +130,10 @@ func buildRows(order []string, stats map[string]pinger.StatsUpdate) []table.Row 
 	for i, id := range order {
 		s, ok := stats[id]
 		if !ok {
-			rows[i] = table.Row{id, "—", "—"}
+			rows[i] = table.Row{id, "—", "—", "—"}
 			continue
 		}
-		rows[i] = table.Row{id, formatRTT(s), formatLoss(s)}
+		rows[i] = table.Row{id, formatRTT(s), formatJitter(s), formatLoss(s)}
 	}
 	return rows
 }
@@ -143,6 +144,13 @@ func formatRTT(s pinger.StatsUpdate) string {
 	}
 	if s.LastErr != nil {
 		return "err"
+	}
+	return "—"
+}
+
+func formatJitter(s pinger.StatsUpdate) string {
+	if s.Jitter > 0 {
+		return s.Jitter.Round(time.Microsecond).String()
 	}
 	return "—"
 }
