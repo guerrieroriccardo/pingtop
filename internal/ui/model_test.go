@@ -162,3 +162,65 @@ func TestUpdateQuitOnClosedChannel(t *testing.T) {
 		t.Errorf("closed channel should produce tea.QuitMsg, got %T", cmd())
 	}
 }
+
+func TestFilterMatchesSubstring(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate)
+	m := New([]string{"1.1.1.1", "8.8.8.8", "192.168.1.10"}, updates)
+
+	m.filter = "8.8"
+	v := m.visibleIDs()
+	if len(v) != 1 || v[0] != "8.8.8.8" {
+		t.Errorf("expected [8.8.8.8] for filter %q, got %v", m.filter, v)
+	}
+
+	m.filter = "."
+	v = m.visibleIDs()
+	if len(v) != 3 {
+		t.Errorf("expected all 3 to match filter %q, got %v", m.filter, v)
+	}
+
+	m.filter = "xyz"
+	v = m.visibleIDs()
+	if len(v) != 0 {
+		t.Errorf("expected no matches for filter %q, got %v", m.filter, v)
+	}
+}
+
+func TestFilterCaseInsensitive(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate)
+	m := New([]string{"host-A.example", "HOST-b.example"}, updates)
+
+	m.filter = "host-a"
+	v := m.visibleIDs()
+	if len(v) != 1 || v[0] != "host-A.example" {
+		t.Errorf("expected [host-A.example] for filter %q, got %v", m.filter, v)
+	}
+}
+
+func TestFilterUpdateOnSlashKey(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate, 4)
+	m := New([]string{"1.1.1.1", "8.8.8.8"}, updates)
+
+	mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	out := mm.(Model)
+	if !out.filterMode {
+		t.Fatalf("expected filterMode=true after '/'")
+	}
+
+	mm, _ = out.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	out = mm.(Model)
+	mm, _ = out.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'.'}})
+	out = mm.(Model)
+	if out.filter != "8." {
+		t.Errorf("expected filter=%q, got %q", "8.", out.filter)
+	}
+
+	mm, _ = out.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	out = mm.(Model)
+	if out.filterMode {
+		t.Errorf("expected filterMode=false after esc")
+	}
+	if out.filter != "" {
+		t.Errorf("expected filter cleared after esc, got %q", out.filter)
+	}
+}

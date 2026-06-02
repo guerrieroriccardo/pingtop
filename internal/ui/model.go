@@ -3,6 +3,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
@@ -23,7 +24,9 @@ type Model struct {
 	updates    <-chan pinger.StatsUpdate
 	table      table.Model
 	stats      map[string]pinger.StatsUpdate
-	termHeight int // last WindowSizeMsg height, used to re-clamp on drop
+	termHeight int    // last WindowSizeMsg height, used to re-clamp on drop
+	filterMode bool   // true while user is typing into the filter
+	filter     string // active filter; empty == no filter
 }
 
 // New builds the initial model. ids is the stable display order
@@ -90,20 +93,51 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Dropped {
 			delete(m.stats, msg.TargetID)
 			m.order = removeID(m.order, msg.TargetID)
-			m.table.SetRows(buildRows(m.order, m.stats))
-			if m.termHeight > 0 {
-				m.table.SetHeight(clampHeight(m.termHeight, len(m.order)))
-			}
+			refresh(&m)
 			return m, m.waitForUpdate()
 		}
 		m.stats[msg.TargetID] = pinger.StatsUpdate(msg)
-		m.table.SetRows(buildRows(m.order, m.stats))
+		refresh(&m)
 		return m, m.waitForUpdate()
 
 	case tea.KeyMsg:
+		if m.filterMode {
+			switch msg.Type {
+			case tea.KeyCtrlC:
+				return m, tea.Quit
+			case tea.KeyEsc:
+				m.filterMode = false
+				m.filter = ""
+				refresh(&m)
+			case tea.KeyEnter:
+				m.filterMode = false
+			case tea.KeyBackspace:
+				if len(m.filter) > 0 {
+					m.filter = m.filter[:len(m.filter)-1]
+					refresh(&m)
+				}
+			case tea.KeySpace:
+				m.filter += " "
+				refresh(&m)
+			case tea.KeyRunes:
+				m.filter += string(msg.Runes)
+				refresh(&m)
+			}
+			return m, nil
+		}
+
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "/":
+			m.filterMode = true
+			return m, nil
+		case "esc":
+			if m.filter != "" {
+				m.filter = ""
+				refresh(&m)
+			}
+			return m, nil
 		}
 		var cmd tea.Cmd
 		m.table, cmd = m.table.Update(msg)
@@ -111,17 +145,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.termHeight = msg.Height
-		m.table.SetHeight(clampHeight(m.termHeight, len(m.order)))
+		refresh(&m)
 		return m, nil
 	}
 	return m, nil
 }
 
 func (m Model) View() string {
+	var text string
+	switch {
+	case m.filterMode:
+		text = fmt.Sprintf("/%s█  [enter] apply  [esc] clear", m.filter)
+	case m.filter != "":
+		text = fmt.Sprintf("filter: %s  [/] edit  [esc] clear  [q] quit", m.filter)
+	default:
+		text = "[q] quit  [/] filter  [↑/↓] scroll"
+	}
 	help := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("241")).
-		Render("[q] quit  [↑/↓] scroll")
+		Render(text)
 	return m.table.View() + "\n" + help
+}
+
+// visibleIDs returns m.order filtered by m.filter (case-insensitive
+// substring). When the filter is empty, it returns m.order directly.
+func (m Model) visibleIDs() []string {
+	if m.filter == "" {
+		return m.order
+	}
+	f := strings.ToLower(m.filter)
+	out := make([]string, 0, len(m.order))
+	for _, id := range m.order {
+		if strings.Contains(strings.ToLower(id), f) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// refresh rebuilds the table rows + height from the current filter and
+// stats. Pointer receiver because the table is a value field and we
+// need its internal state updates to stick on the caller's Model.
+func refresh(m *Model) {
+	v := m.visibleIDs()
+	m.table.SetRows(buildRows(v, m.stats))
+	if m.termHeight > 0 {
+		m.table.SetHeight(clampHeight(m.termHeight, len(v)))
+	}
 }
 
 // buildRows produces table rows in the stable order. A nil stats map
