@@ -35,6 +35,7 @@ func New(ids []string, updates <-chan pinger.StatsUpdate) Model {
 		{Title: "RTT", Width: 12},
 		{Title: "JITTER", Width: 10},
 		{Title: "LOSS%", Width: 8},
+		{Title: "SENT/LOST", Width: 12},
 	}
 	t := table.New(
 		table.WithColumns(columns),
@@ -130,10 +131,10 @@ func buildRows(order []string, stats map[string]pinger.StatsUpdate) []table.Row 
 	for i, id := range order {
 		s, ok := stats[id]
 		if !ok {
-			rows[i] = table.Row{id, "—", "—", "—"}
+			rows[i] = table.Row{id, "—", "—", "—", "—"}
 			continue
 		}
-		rows[i] = table.Row{id, formatRTT(s), formatJitter(s), formatLoss(s)}
+		rows[i] = table.Row{id, formatRTT(s), formatJitter(s), formatLoss(s), formatSentLost(s)}
 	}
 	return rows
 }
@@ -161,6 +162,17 @@ func formatLoss(s pinger.StatsUpdate) string {
 	}
 	pct := 100 * float64(s.Sent-s.Recv) / float64(s.Sent)
 	return fmt.Sprintf("%.1f%%", pct)
+}
+
+func formatSentLost(s pinger.StatsUpdate) string {
+	if s.Sent == 0 {
+		return "—"
+	}
+	lost := s.Sent - s.Recv
+	if lost < 0 {
+		lost = 0
+	}
+	return fmt.Sprintf("%d/%d", s.Sent, lost)
 }
 
 // headerLines is the rendered height of bubbles/table's header

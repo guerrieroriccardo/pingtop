@@ -67,6 +67,25 @@ func TestFormatLoss(t *testing.T) {
 	}
 }
 
+func TestFormatSentLost(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		s    pinger.StatsUpdate
+		want string
+	}{
+		{"no data", pinger.StatsUpdate{}, "—"},
+		{"all received", pinger.StatsUpdate{Sent: 10, Recv: 10}, "10/0"},
+		{"two lost", pinger.StatsUpdate{Sent: 10, Recv: 8}, "10/2"},
+		{"recv exceeds sent clamps", pinger.StatsUpdate{Sent: 5, Recv: 6}, "5/0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatSentLost(tc.s); got != tc.want {
+				t.Errorf("formatSentLost = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBuildRowsInitial(t *testing.T) {
 	rows := buildRows([]string{"1.1.1.1", "8.8.8.8"}, nil)
 	if len(rows) != 2 {
@@ -76,7 +95,7 @@ func TestBuildRowsInitial(t *testing.T) {
 		t.Errorf("rows lost their order: %v", rows)
 	}
 	for _, r := range rows {
-		if len(r) != 4 || r[1] != "—" || r[2] != "—" || r[3] != "—" {
+		if len(r) != 5 || r[1] != "—" || r[2] != "—" || r[3] != "—" || r[4] != "—" {
 			t.Errorf("expected placeholders, got %v", r)
 		}
 	}
