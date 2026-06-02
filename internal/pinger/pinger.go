@@ -2,8 +2,10 @@ package pinger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -73,6 +75,13 @@ func (p *Pinger) Run(ctx context.Context) error {
 		p.emit(ctx, snapshot(pkt.Rtt, nil))
 	}
 	pp.OnRecvError = func(err error) {
+		// pro-bing's recv loop fires OnRecvError on every read
+		// deadline tick as part of its normal poll cycle. Those
+		// aren't real failures; ignore them so the UI doesn't
+		// flicker between the latest RTT and "err".
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return
+		}
 		p.emit(ctx, snapshot(0, err))
 	}
 	pp.OnSendError = func(_ *probing.Packet, err error) {
