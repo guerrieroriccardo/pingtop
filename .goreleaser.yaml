@@ -48,3 +48,24 @@ aurs:
     commit_author:
       name: Riccardo Guerriero
       email: aur@guer.ro
+aur_sources:
+  - name: pingtop
+    homepage: "https://github.com/guerrieroriccardo/pingtop"
+    description: "htop-style live dashboard for ping"
+    maintainers:
+      - 'Riccardo Guerriero <aur@guer.ro>'
+    license: "Apache-2.0"
+    private_key: "{{ .Env.AUR_KEY }}"
+    git_url: "ssh://aur@aur.archlinux.org/pingtop.git"
+    conflicts: ["pingtop-bin"]
+    build: |-
+      cd "$pkgname-$pkgver"
+      export CGO_ENABLED=0
+      go build -trimpath -ldflags="-s -w -X main.version=$pkgver" -o "$pkgname" .
+    package: |-
+      cd "$pkgname-$pkgver"
+      install -Dm755 "./$pkgname" "${pkgdir}/usr/bin/$pkgname"
+      install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+    commit_author:
+      name: Riccardo Guerriero
+      email: aur@guer.ro
