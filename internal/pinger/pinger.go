@@ -21,6 +21,9 @@ type StatsUpdate struct {
 	Sent     int64
 	Recv     int64
 	RTT      time.Duration // most recent successful sample; zero if N/A
+	MinRTT   time.Duration // smallest RTT observed; zero until first reply
+	AvgRTT   time.Duration // running mean over recv replies; zero until first reply
+	MaxRTT   time.Duration // largest RTT observed; zero until first reply
 	Jitter   time.Duration // RFC 3550 smoothed inter-packet jitter; zero until 2nd reply
 	LastErr  error         // sticky last error for display; nil on success
 	Dropped  bool          // pinger has stopped; UI should remove this target
@@ -64,16 +67,29 @@ func (p *Pinger) Run(ctx context.Context) error {
 	defer cancel()
 
 	var sent, recv atomic.Int64
-	// prevRTT/jitter are written only from OnRecv (pro-bing's recv loop
-	// is single-goroutine) but read from OnSend's snapshot, so atomics
-	// are still the right choice.
+	// prevRTT/jitter/min/sum/max are written only from OnRecv (pro-bing's
+	// recv loop is single-goroutine) but read from OnSend's snapshot, so
+	// atomics are still the right choice.
 	var prevRTT, jitter atomic.Int64
+	var minRTT, sumRTT, maxRTT atomic.Int64
+	minRTT.Store(math.MaxInt64) // sentinel so the first reply always becomes the min
 	snapshot := func(rtt time.Duration, lastErr error) StatsUpdate {
+		min := time.Duration(minRTT.Load())
+		if min == time.Duration(math.MaxInt64) {
+			min = 0 // no replies yet; UI renders as "—"
+		}
+		var avg time.Duration
+		if n := recv.Load(); n > 0 {
+			avg = time.Duration(sumRTT.Load() / n)
+		}
 		return StatsUpdate{
 			TargetID: p.ID,
 			Sent:     sent.Load(),
 			Recv:     recv.Load(),
 			RTT:      rtt,
+			MinRTT:   min,
+			AvgRTT:   avg,
+			MaxRTT:   time.Duration(maxRTT.Load()),
 			Jitter:   time.Duration(jitter.Load()),
 			LastErr:  lastErr,
 		}
@@ -98,9 +114,17 @@ func (p *Pinger) Run(ctx context.Context) error {
 	}
 	pp.OnRecv = func(pkt *probing.Packet) {
 		recv.Add(1)
+		rtt := int64(pkt.Rtt)
+		sumRTT.Add(rtt)
+		if cur := minRTT.Load(); rtt < cur {
+			minRTT.Store(rtt)
+		}
+		if cur := maxRTT.Load(); rtt > cur {
+			maxRTT.Store(rtt)
+		}
 		// RFC 3550 smoothed jitter: J = J + (|D| - J)/16. Skip the
 		// first reply (prev == 0), where the delta is undefined.
-		prev := time.Duration(prevRTT.Swap(int64(pkt.Rtt)))
+		prev := time.Duration(prevRTT.Swap(rtt))
 		if prev > 0 {
 			d := pkt.Rtt - prev
 			if d < 0 {

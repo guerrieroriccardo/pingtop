@@ -39,7 +39,10 @@ type Model struct {
 func New(ids []string, updates <-chan pinger.StatsUpdate, keepDropped bool) Model {
 	columns := []table.Column{
 		{Title: "TARGET", Width: 28},
-		{Title: "RTT", Width: 12},
+		{Title: "RTT", Width: 10},
+		{Title: "MIN", Width: 10},
+		{Title: "AVG", Width: 10},
+		{Title: "MAX", Width: 10},
 		{Title: "JITTER", Width: 10},
 		{Title: "LOSS%", Width: 8},
 		{Title: "SENT/LOST", Width: 12},
@@ -220,10 +223,20 @@ func buildRows(order []string, stats map[string]pinger.StatsUpdate, history map[
 	for i, id := range order {
 		s, ok := stats[id]
 		if !ok {
-			rows[i] = table.Row{id, "—", "—", "—", "—", formatSpark(nil)}
+			rows[i] = table.Row{id, "—", "—", "—", "—", "—", "—", "—", formatSpark(nil)}
 			continue
 		}
-		rows[i] = table.Row{id, formatRTT(s), formatJitter(s), formatLoss(s), formatSentLost(s), formatSpark(history[id])}
+		rows[i] = table.Row{
+			id,
+			formatRTT(s),
+			formatDur(s.MinRTT),
+			formatDur(s.AvgRTT),
+			formatDur(s.MaxRTT),
+			formatJitter(s),
+			formatLoss(s),
+			formatSentLost(s),
+			formatSpark(history[id]),
+		}
 	}
 	return rows
 }
@@ -241,6 +254,15 @@ func formatRTT(s pinger.StatsUpdate) string {
 func formatJitter(s pinger.StatsUpdate) string {
 	if s.Jitter > 0 {
 		return s.Jitter.Round(time.Microsecond).String()
+	}
+	return "—"
+}
+
+// formatDur renders a Duration as a microsecond-rounded string, or "—"
+// for zero. Used by the MIN/AVG/MAX columns which have no error branch.
+func formatDur(d time.Duration) string {
+	if d > 0 {
+		return d.Round(time.Microsecond).String()
 	}
 	return "—"
 }

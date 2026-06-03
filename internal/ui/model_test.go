@@ -95,8 +95,14 @@ func TestBuildRowsInitial(t *testing.T) {
 		t.Errorf("rows lost their order: %v", rows)
 	}
 	for _, r := range rows {
-		if len(r) != 6 || r[1] != "—" || r[2] != "—" || r[3] != "—" || r[4] != "—" {
-			t.Errorf("expected placeholders, got %v", r)
+		if len(r) != 9 {
+			t.Errorf("expected 9 cells, got %d in %v", len(r), r)
+			continue
+		}
+		for i := 1; i <= 7; i++ {
+			if r[i] != "—" {
+				t.Errorf("expected placeholder at index %d, got %q in %v", i, r[i], r)
+			}
 		}
 	}
 }
@@ -105,15 +111,47 @@ func TestUpdateApplyingStatsMsg(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate, 4)
 	m := New([]string{"1.1.1.1", "8.8.8.8"}, updates, false)
 
-	mm, _ := m.Update(statsMsg{TargetID: "1.1.1.1", Sent: 4, Recv: 3, RTT: 5 * time.Millisecond})
+	mm, _ := m.Update(statsMsg{
+		TargetID: "1.1.1.1",
+		Sent:     4,
+		Recv:     3,
+		RTT:      5 * time.Millisecond,
+		MinRTT:   1 * time.Millisecond,
+		AvgRTT:   3 * time.Millisecond,
+		MaxRTT:   7 * time.Millisecond,
+	})
 	got := mm.(Model).stats["1.1.1.1"]
 	if got.RTT != 5*time.Millisecond || got.Sent != 4 || got.Recv != 3 {
 		t.Errorf("stats not stored as expected: %+v", got)
 	}
+	if got.MinRTT != 1*time.Millisecond || got.AvgRTT != 3*time.Millisecond || got.MaxRTT != 7*time.Millisecond {
+		t.Errorf("min/avg/max not stored: %+v", got)
+	}
 
 	view := mm.(Model).View()
-	if !strings.Contains(view, "5ms") || !strings.Contains(view, "25.0%") {
-		t.Errorf("view missing expected formatted values:\n%s", view)
+	for _, want := range []string{"5ms", "1ms", "3ms", "7ms", "25.0%"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestFormatDur(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		d    time.Duration
+		want string
+	}{
+		{"zero", 0, "—"},
+		{"sub-ms", 750 * time.Microsecond, "750µs"},
+		{"ms", 5 * time.Millisecond, "5ms"},
+		{"fractional ms", 2*time.Millisecond + 500*time.Microsecond, "2.5ms"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatDur(tc.d); got != tc.want {
+				t.Errorf("formatDur(%v) = %q, want %q", tc.d, got, tc.want)
+			}
+		})
 	}
 }
 
