@@ -23,6 +23,7 @@ checksum:
   name_template: "checksums.txt"
 source:
   enabled: true
+  prefix_template: "{{ .ProjectName }}-{{ .Version }}/"
 changelog:
   use: git
   sort: asc
