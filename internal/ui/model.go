@@ -10,7 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/guerro/pingtop/internal/pinger"
+	"github.com/guerrieroriccardo/pingtop/internal/pinger"
 )
 
 // statsMsg wraps a StatsUpdate so it can flow through the Bubble Tea

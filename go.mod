@@ -1,4 +1,4 @@
-module github.com/guerro/pingtop
+module github.com/guerrieroriccardo/pingtop
 
 go 1.26.3
 

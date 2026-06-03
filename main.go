@@ -10,9 +10,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/guerro/pingtop/internal/pinger"
-	"github.com/guerro/pingtop/internal/target"
-	"github.com/guerro/pingtop/internal/ui"
+	"github.com/guerrieroriccardo/pingtop/internal/pinger"
+	"github.com/guerrieroriccardo/pingtop/internal/target"
+	"github.com/guerrieroriccardo/pingtop/internal/ui"
 )
 
 func main() {

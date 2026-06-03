@@ -8,7 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/guerro/pingtop/internal/pinger"
+	"github.com/guerrieroriccardo/pingtop/internal/pinger"
 )
 
 func TestFormatRTT(t *testing.T) {
