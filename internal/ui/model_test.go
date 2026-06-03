@@ -262,6 +262,17 @@ func TestUpdateAppendsHistoryOnRTT(t *testing.T) {
 	}
 }
 
+func TestViewWhenAllTargetsDropped(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate, 4)
+	m := New([]string{"1.1.1.1"}, updates)
+
+	mm, _ := m.Update(statsMsg{TargetID: "1.1.1.1", Dropped: true})
+	view := mm.(Model).View()
+	if !strings.Contains(view, "no hosts reachable") {
+		t.Errorf("view should show empty-state message, got:\n%s", view)
+	}
+}
+
 func TestFilterUpdateOnSlashKey(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate, 4)
 	m := New([]string{"1.1.1.1", "8.8.8.8"}, updates)

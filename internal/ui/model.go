@@ -163,6 +163,8 @@ func (m Model) View() string {
 	switch {
 	case m.filterMode:
 		text = fmt.Sprintf("/%s█  [enter] apply  [esc] clear", m.filter)
+	case len(m.order) == 0:
+		text = "no hosts reachable — [q] quit"
 	case m.filter != "":
 		text = fmt.Sprintf("filter: %s  [/] edit  [esc] clear  [q] quit", m.filter)
 	default:

@@ -82,14 +82,6 @@ func run() error {
 		}()
 	}
 
-	// Safety net: if every pinger exits on its own (e.g., all targets
-	// failed to resolve), close the channel so the UI sees EOF and
-	// quits instead of hanging.
-	go func() {
-		wg.Wait()
-		close(updates)
-	}()
-
 	prog := tea.NewProgram(ui.New(ids, updates), tea.WithAltScreen())
 	_, runErr := prog.Run()
 
