@@ -1,0 +1,33 @@
+version: 2
+project_name: pingtop
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - id: pingtop
+    main: .
+    binary: pingtop
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+archives:
+  - id: pingtop
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+checksum:
+  name_template: "checksums.txt"
+source:
+  enabled: true
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^ci:"
+      - "^docs:"
+      - "^chore:"
