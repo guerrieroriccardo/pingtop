@@ -20,20 +20,23 @@ type statsMsg pinger.StatsUpdate
 // Model is the dashboard state. Construct it with New, then pass it to
 // tea.NewProgram.
 type Model struct {
-	order      []string
-	updates    <-chan pinger.StatsUpdate
-	table      table.Model
-	stats      map[string]pinger.StatsUpdate
-	history    map[string][]time.Duration // per-target RTT ring buffer for the sparkline
-	termHeight int                        // last WindowSizeMsg height, used to re-clamp on drop
-	filterMode bool                       // true while user is typing into the filter
-	filter     string                     // active filter; empty == no filter
+	order       []string
+	updates     <-chan pinger.StatsUpdate
+	table       table.Model
+	stats       map[string]pinger.StatsUpdate
+	history     map[string][]time.Duration // per-target RTT ring buffer for the sparkline
+	termHeight  int                        // last WindowSizeMsg height, used to re-clamp on drop
+	filterMode  bool                       // true while user is typing into the filter
+	filter      string                     // active filter; empty == no filter
+	keepDropped bool                       // if true, dropped rows stay visible with final stats
 }
 
 // New builds the initial model. ids is the stable display order
 // produced by target.Expand; updates is the shared channel the
-// pingers publish on.
-func New(ids []string, updates <-chan pinger.StatsUpdate) Model {
+// pingers publish on. If keepDropped is true, rows for targets that
+// hit the drop threshold stay visible with their final (100% loss)
+// stats instead of being removed.
+func New(ids []string, updates <-chan pinger.StatsUpdate, keepDropped bool) Model {
 	columns := []table.Column{
 		{Title: "TARGET", Width: 28},
 		{Title: "RTT", Width: 12},
@@ -62,11 +65,12 @@ func New(ids []string, updates <-chan pinger.StatsUpdate) Model {
 	t.SetStyles(s)
 
 	return Model{
-		order:   ids,
-		updates: updates,
-		table:   t,
-		stats:   make(map[string]pinger.StatsUpdate, len(ids)),
-		history: make(map[string][]time.Duration, len(ids)),
+		order:       ids,
+		updates:     updates,
+		table:       t,
+		stats:       make(map[string]pinger.StatsUpdate, len(ids)),
+		history:     make(map[string][]time.Duration, len(ids)),
+		keepDropped: keepDropped,
 	}
 }
 
@@ -94,9 +98,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case statsMsg:
 		if msg.Dropped {
-			delete(m.stats, msg.TargetID)
-			delete(m.history, msg.TargetID)
-			m.order = removeID(m.order, msg.TargetID)
+			if m.keepDropped {
+				// Persist the final snapshot (Sent=N, Recv=0) so the
+				// row keeps showing 100% loss after the pinger stops.
+				m.stats[msg.TargetID] = pinger.StatsUpdate(msg)
+			} else {
+				delete(m.stats, msg.TargetID)
+				delete(m.history, msg.TargetID)
+				m.order = removeID(m.order, msg.TargetID)
+			}
 			refresh(&m)
 			return m, m.waitForUpdate()
 		}

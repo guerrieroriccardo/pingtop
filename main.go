@@ -30,6 +30,9 @@ func run() error {
 	var drop int
 	flag.IntVar(&drop, "drop", 0, "drop a target after this many sends with no replies (0=disabled)")
 	flag.IntVar(&drop, "d", 0, "alias for --drop")
+	var keepDropped bool
+	flag.BoolVar(&keepDropped, "keep-dropped", false, "keep dropped rows in the table (final stats stay visible)")
+	flag.BoolVar(&keepDropped, "k", false, "alias for --keep-dropped")
 	size := flag.Int("size", 24, "ICMP payload size in bytes")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: pingtop [flags] <target>...\n\n")
@@ -82,7 +85,7 @@ func run() error {
 		}()
 	}
 
-	prog := tea.NewProgram(ui.New(ids, updates), tea.WithAltScreen())
+	prog := tea.NewProgram(ui.New(ids, updates, keepDropped), tea.WithAltScreen())
 	_, runErr := prog.Run()
 
 	cancel()

@@ -103,7 +103,7 @@ func TestBuildRowsInitial(t *testing.T) {
 
 func TestUpdateApplyingStatsMsg(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate, 4)
-	m := New([]string{"1.1.1.1", "8.8.8.8"}, updates)
+	m := New([]string{"1.1.1.1", "8.8.8.8"}, updates, false)
 
 	mm, _ := m.Update(statsMsg{TargetID: "1.1.1.1", Sent: 4, Recv: 3, RTT: 5 * time.Millisecond})
 	got := mm.(Model).stats["1.1.1.1"]
@@ -119,7 +119,7 @@ func TestUpdateApplyingStatsMsg(t *testing.T) {
 
 func TestUpdateRemovesDroppedTarget(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate, 4)
-	m := New([]string{"1.1.1.1", "8.8.8.8", "9.9.9.9"}, updates)
+	m := New([]string{"1.1.1.1", "8.8.8.8", "9.9.9.9"}, updates, false)
 
 	mm, _ := m.Update(statsMsg{TargetID: "8.8.8.8", Dropped: true})
 	out := mm.(Model)
@@ -141,7 +141,7 @@ func TestUpdateRemovesDroppedTarget(t *testing.T) {
 
 func TestUpdateQuitOnKey(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate)
-	m := New([]string{"1.1.1.1"}, updates)
+	m := New([]string{"1.1.1.1"}, updates, false)
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if cmd == nil {
@@ -155,7 +155,7 @@ func TestUpdateQuitOnKey(t *testing.T) {
 func TestUpdateQuitOnClosedChannel(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate)
 	close(updates)
-	m := New([]string{"1.1.1.1"}, updates)
+	m := New([]string{"1.1.1.1"}, updates, false)
 
 	cmd := m.Init()
 	if _, ok := cmd().(tea.QuitMsg); !ok {
@@ -165,7 +165,7 @@ func TestUpdateQuitOnClosedChannel(t *testing.T) {
 
 func TestFilterMatchesSubstring(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate)
-	m := New([]string{"1.1.1.1", "8.8.8.8", "192.168.1.10"}, updates)
+	m := New([]string{"1.1.1.1", "8.8.8.8", "192.168.1.10"}, updates, false)
 
 	m.filter = "8.8"
 	v := m.visibleIDs()
@@ -188,7 +188,7 @@ func TestFilterMatchesSubstring(t *testing.T) {
 
 func TestFilterCaseInsensitive(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate)
-	m := New([]string{"host-A.example", "HOST-b.example"}, updates)
+	m := New([]string{"host-A.example", "HOST-b.example"}, updates, false)
 
 	m.filter = "host-a"
 	v := m.visibleIDs()
@@ -246,7 +246,7 @@ func TestAppendHistoryRingBuffer(t *testing.T) {
 
 func TestUpdateAppendsHistoryOnRTT(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate, 4)
-	m := New([]string{"1.1.1.1"}, updates)
+	m := New([]string{"1.1.1.1"}, updates, false)
 
 	mm, _ := m.Update(statsMsg{TargetID: "1.1.1.1", Sent: 1, Recv: 1, RTT: 3 * time.Millisecond})
 	out := mm.(Model)
@@ -264,7 +264,7 @@ func TestUpdateAppendsHistoryOnRTT(t *testing.T) {
 
 func TestViewWhenAllTargetsDropped(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate, 4)
-	m := New([]string{"1.1.1.1"}, updates)
+	m := New([]string{"1.1.1.1"}, updates, false)
 
 	mm, _ := m.Update(statsMsg{TargetID: "1.1.1.1", Dropped: true})
 	view := mm.(Model).View()
@@ -273,9 +273,32 @@ func TestViewWhenAllTargetsDropped(t *testing.T) {
 	}
 }
 
+func TestKeepDroppedRetainsRow(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate, 4)
+	m := New([]string{"1.1.1.1", "8.8.8.8"}, updates, true)
+
+	mm, _ := m.Update(statsMsg{TargetID: "8.8.8.8", Sent: 5, Recv: 0, Dropped: true})
+	out := mm.(Model)
+
+	if len(out.order) != 2 {
+		t.Errorf("keep-dropped should preserve order, got %v", out.order)
+	}
+	got, ok := out.stats["8.8.8.8"]
+	if !ok {
+		t.Fatalf("stats for dropped target should be retained")
+	}
+	if got.Sent != 5 || got.Recv != 0 {
+		t.Errorf("final stats should be (5,0), got (%d,%d)", got.Sent, got.Recv)
+	}
+	view := out.View()
+	if !strings.Contains(view, "8.8.8.8") || !strings.Contains(view, "100.0%") || !strings.Contains(view, "5/5") {
+		t.Errorf("view should show row with 100%% loss and 5/5, got:\n%s", view)
+	}
+}
+
 func TestFilterUpdateOnSlashKey(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate, 4)
-	m := New([]string{"1.1.1.1", "8.8.8.8"}, updates)
+	m := New([]string{"1.1.1.1", "8.8.8.8"}, updates, false)
 
 	mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 	out := mm.(Model)
