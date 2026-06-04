@@ -35,20 +35,23 @@ type Model struct {
 	filterMode  bool                       // true while user is typing into the filter
 	filter      string                     // active filter; empty == no filter
 	keepDropped bool                       // if true, dropped rows stay visible with final stats
+	styler      styler                     // colors for RTT/JITTER/LOSS%; disabled styler is a no-op
 }
 
 // New builds the initial model. ids is the stable display order
 // produced by target.Expand; updates is the shared channel the
 // pingers publish on. If keepDropped is true, rows for targets that
 // hit the drop threshold stay visible with their final (100% loss)
-// stats instead of being removed.
-func New(ids []string, updates <-chan pinger.StatsUpdate, keepDropped bool) Model {
+// stats instead of being removed. If colorize is true, the RTT,
+// JITTER, and LOSS% cells are tinted by threshold.
+func New(ids []string, updates <-chan pinger.StatsUpdate, keepDropped, colorize bool) Model {
 	return Model{
 		order:       ids,
 		updates:     updates,
 		stats:       make(map[string]pinger.StatsUpdate, len(ids)),
 		history:     make(map[string][]time.Duration, len(ids)),
 		keepDropped: keepDropped,
+		styler:      newStyler(colorize),
 	}
 }
 
@@ -175,7 +178,7 @@ func (m Model) View() string {
 // is a stateless renderer, not a Bubble Tea component, so we rebuild from
 // current model state rather than holding a long-lived table instance.
 func (m Model) renderTable() string {
-	rows := buildRows(m.visibleIDs(), m.stats, m.history)
+	rows := buildRows(m.visibleIDs(), m.stats, m.history, m.styler)
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	t := table.New().
 		Border(lipgloss.NormalBorder()).
@@ -226,7 +229,7 @@ func (m Model) visibleIDs() []string {
 
 // buildRows produces table rows in the stable order. A nil stats map
 // renders all targets in their initial "no data yet" state.
-func buildRows(order []string, stats map[string]pinger.StatsUpdate, history map[string][]time.Duration) [][]string {
+func buildRows(order []string, stats map[string]pinger.StatsUpdate, history map[string][]time.Duration, st styler) [][]string {
 	rows := make([][]string, len(order))
 	for i, id := range order {
 		s, ok := stats[id]
@@ -236,12 +239,12 @@ func buildRows(order []string, stats map[string]pinger.StatsUpdate, history map[
 		}
 		rows[i] = []string{
 			id,
-			formatRTT(s),
+			st.render(formatRTT(s), rttLevel(s)),
 			formatDur(s.MinRTT),
 			formatDur(s.AvgRTT),
 			formatDur(s.MaxRTT),
-			formatJitter(s),
-			formatLoss(s),
+			st.render(formatJitter(s), jitterLevel(s)),
+			st.render(formatLoss(s), lossLevel(s)),
 			formatSentLost(s),
 			formatSpark(history[id]),
 		}
@@ -292,6 +295,109 @@ func formatSentLost(s pinger.StatsUpdate) string {
 		lost = 0
 	}
 	return fmt.Sprintf("%d/%d", s.Sent, lost)
+}
+
+// level classifies a metric value into a color bucket. levelNeutral
+// means "no data" / "no verdict" — styler renders it without color.
+type level int
+
+const (
+	levelNeutral level = iota
+	levelGood
+	levelWarn
+	levelCrit
+)
+
+// Threshold defaults: chosen to match common sysadmin intuition for
+// LAN/WAN ping monitoring. Not configurable in v0.10; promote to flags
+// if anyone asks.
+const (
+	rttWarn     = 50 * time.Millisecond
+	rttCrit     = 200 * time.Millisecond
+	jitterWarn  = 5 * time.Millisecond
+	jitterCrit  = 20 * time.Millisecond
+	lossCritPct = 5.0 // ≥ 5% loss is crit; anything > 0 and < 5 is warn
+)
+
+func rttLevel(s pinger.StatsUpdate) level {
+	if s.RTT > 0 {
+		switch {
+		case s.RTT < rttWarn:
+			return levelGood
+		case s.RTT < rttCrit:
+			return levelWarn
+		default:
+			return levelCrit
+		}
+	}
+	if s.LastErr != nil {
+		return levelCrit
+	}
+	return levelNeutral
+}
+
+func jitterLevel(s pinger.StatsUpdate) level {
+	if s.Jitter <= 0 {
+		return levelNeutral
+	}
+	switch {
+	case s.Jitter < jitterWarn:
+		return levelGood
+	case s.Jitter < jitterCrit:
+		return levelWarn
+	default:
+		return levelCrit
+	}
+}
+
+func lossLevel(s pinger.StatsUpdate) level {
+	if s.Sent == 0 {
+		return levelNeutral
+	}
+	pct := 100 * float64(s.Sent-s.Recv) / float64(s.Sent)
+	switch {
+	case pct == 0:
+		return levelGood
+	case pct < lossCritPct:
+		return levelWarn
+	default:
+		return levelCrit
+	}
+}
+
+// styler wraps cell strings in lipgloss color styles. The zero value
+// (enabled=false) is a no-op renderer, so passing styler{} disables
+// coloring without special-casing callers.
+type styler struct {
+	enabled    bool
+	good, warn, crit lipgloss.Style
+}
+
+func newStyler(enabled bool) styler {
+	if !enabled {
+		return styler{}
+	}
+	return styler{
+		enabled: true,
+		good:    lipgloss.NewStyle().Foreground(lipgloss.Color("10")),
+		warn:    lipgloss.NewStyle().Foreground(lipgloss.Color("11")),
+		crit:    lipgloss.NewStyle().Foreground(lipgloss.Color("9")),
+	}
+}
+
+func (st styler) render(s string, l level) string {
+	if !st.enabled || l == levelNeutral {
+		return s
+	}
+	switch l {
+	case levelGood:
+		return st.good.Render(s)
+	case levelWarn:
+		return st.warn.Render(s)
+	case levelCrit:
+		return st.crit.Render(s)
+	}
+	return s
 }
 
 // headerLines counts the rows lipgloss/table renders above the data:

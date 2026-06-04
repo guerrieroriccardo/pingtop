@@ -7,6 +7,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/guerrieroriccardo/pingtop/internal/pinger"
 )
@@ -87,7 +89,7 @@ func TestFormatSentLost(t *testing.T) {
 }
 
 func TestBuildRowsInitial(t *testing.T) {
-	rows := buildRows([]string{"1.1.1.1", "8.8.8.8"}, nil, nil)
+	rows := buildRows([]string{"1.1.1.1", "8.8.8.8"}, nil, nil, styler{})
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
@@ -109,7 +111,7 @@ func TestBuildRowsInitial(t *testing.T) {
 
 func TestScrollWithinBounds(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate)
-	m := New([]string{"a", "b", "c", "d", "e"}, updates, false)
+	m := New([]string{"a", "b", "c", "d", "e"}, updates, false, false)
 	m.termHeight = 5 // 5 lines total: 1 help + 2 header = 2 available data rows.
 
 	// First down arrow scrolls; further presses cap at maxOffset.
@@ -133,7 +135,7 @@ func TestScrollWithinBounds(t *testing.T) {
 
 func TestUpdateApplyingStatsMsg(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate, 4)
-	m := New([]string{"1.1.1.1", "8.8.8.8"}, updates, false)
+	m := New([]string{"1.1.1.1", "8.8.8.8"}, updates, false, false)
 
 	mm, _ := m.Update(statsMsg{
 		TargetID: "1.1.1.1",
@@ -181,7 +183,7 @@ func TestFormatDur(t *testing.T) {
 
 func TestUpdateRemovesDroppedTarget(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate, 4)
-	m := New([]string{"1.1.1.1", "8.8.8.8", "9.9.9.9"}, updates, false)
+	m := New([]string{"1.1.1.1", "8.8.8.8", "9.9.9.9"}, updates, false, false)
 
 	mm, _ := m.Update(statsMsg{TargetID: "8.8.8.8", Dropped: true})
 	out := mm.(Model)
@@ -203,7 +205,7 @@ func TestUpdateRemovesDroppedTarget(t *testing.T) {
 
 func TestUpdateQuitOnKey(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate)
-	m := New([]string{"1.1.1.1"}, updates, false)
+	m := New([]string{"1.1.1.1"}, updates, false, false)
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if cmd == nil {
@@ -217,7 +219,7 @@ func TestUpdateQuitOnKey(t *testing.T) {
 func TestUpdateQuitOnClosedChannel(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate)
 	close(updates)
-	m := New([]string{"1.1.1.1"}, updates, false)
+	m := New([]string{"1.1.1.1"}, updates, false, false)
 
 	cmd := m.Init()
 	if _, ok := cmd().(tea.QuitMsg); !ok {
@@ -227,7 +229,7 @@ func TestUpdateQuitOnClosedChannel(t *testing.T) {
 
 func TestFilterMatchesSubstring(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate)
-	m := New([]string{"1.1.1.1", "8.8.8.8", "192.168.1.10"}, updates, false)
+	m := New([]string{"1.1.1.1", "8.8.8.8", "192.168.1.10"}, updates, false, false)
 
 	m.filter = "8.8"
 	v := m.visibleIDs()
@@ -250,7 +252,7 @@ func TestFilterMatchesSubstring(t *testing.T) {
 
 func TestFilterCaseInsensitive(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate)
-	m := New([]string{"host-A.example", "HOST-b.example"}, updates, false)
+	m := New([]string{"host-A.example", "HOST-b.example"}, updates, false, false)
 
 	m.filter = "host-a"
 	v := m.visibleIDs()
@@ -308,7 +310,7 @@ func TestAppendHistoryRingBuffer(t *testing.T) {
 
 func TestUpdateAppendsHistoryOnRTT(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate, 4)
-	m := New([]string{"1.1.1.1"}, updates, false)
+	m := New([]string{"1.1.1.1"}, updates, false, false)
 
 	mm, _ := m.Update(statsMsg{TargetID: "1.1.1.1", Sent: 1, Recv: 1, RTT: 3 * time.Millisecond})
 	out := mm.(Model)
@@ -326,7 +328,7 @@ func TestUpdateAppendsHistoryOnRTT(t *testing.T) {
 
 func TestViewWhenAllTargetsDropped(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate, 4)
-	m := New([]string{"1.1.1.1"}, updates, false)
+	m := New([]string{"1.1.1.1"}, updates, false, false)
 
 	mm, _ := m.Update(statsMsg{TargetID: "1.1.1.1", Dropped: true})
 	view := mm.(Model).View()
@@ -337,7 +339,7 @@ func TestViewWhenAllTargetsDropped(t *testing.T) {
 
 func TestKeepDroppedRetainsRow(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate, 4)
-	m := New([]string{"1.1.1.1", "8.8.8.8"}, updates, true)
+	m := New([]string{"1.1.1.1", "8.8.8.8"}, updates, true, false)
 
 	mm, _ := m.Update(statsMsg{TargetID: "8.8.8.8", Sent: 5, Recv: 0, Dropped: true})
 	out := mm.(Model)
@@ -360,7 +362,7 @@ func TestKeepDroppedRetainsRow(t *testing.T) {
 
 func TestFilterUpdateOnSlashKey(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate, 4)
-	m := New([]string{"1.1.1.1", "8.8.8.8"}, updates, false)
+	m := New([]string{"1.1.1.1", "8.8.8.8"}, updates, false, false)
 
 	mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 	out := mm.(Model)
@@ -386,3 +388,94 @@ func TestFilterUpdateOnSlashKey(t *testing.T) {
 	}
 }
 
+func TestRTTLevel(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		s    pinger.StatsUpdate
+		want level
+	}{
+		{"no data", pinger.StatsUpdate{}, levelNeutral},
+		{"err only", pinger.StatsUpdate{LastErr: errors.New("boom")}, levelCrit},
+		{"good", pinger.StatsUpdate{RTT: 30 * time.Millisecond}, levelGood},
+		{"warn at boundary", pinger.StatsUpdate{RTT: 50 * time.Millisecond}, levelWarn},
+		{"warn", pinger.StatsUpdate{RTT: 100 * time.Millisecond}, levelWarn},
+		{"crit at boundary", pinger.StatsUpdate{RTT: 200 * time.Millisecond}, levelCrit},
+		{"crit", pinger.StatsUpdate{RTT: 500 * time.Millisecond}, levelCrit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := rttLevel(tc.s); got != tc.want {
+				t.Errorf("rttLevel = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestJitterLevel(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		s    pinger.StatsUpdate
+		want level
+	}{
+		{"no data", pinger.StatsUpdate{}, levelNeutral},
+		{"good", pinger.StatsUpdate{Jitter: 1 * time.Millisecond}, levelGood},
+		{"warn", pinger.StatsUpdate{Jitter: 10 * time.Millisecond}, levelWarn},
+		{"crit", pinger.StatsUpdate{Jitter: 50 * time.Millisecond}, levelCrit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := jitterLevel(tc.s); got != tc.want {
+				t.Errorf("jitterLevel = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLossLevel(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		s    pinger.StatsUpdate
+		want level
+	}{
+		{"no sends", pinger.StatsUpdate{}, levelNeutral},
+		{"zero loss", pinger.StatsUpdate{Sent: 100, Recv: 100}, levelGood},
+		{"warn", pinger.StatsUpdate{Sent: 100, Recv: 99}, levelWarn},
+		{"crit at boundary", pinger.StatsUpdate{Sent: 100, Recv: 95}, levelCrit},
+		{"all lost", pinger.StatsUpdate{Sent: 5, Recv: 0}, levelCrit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := lossLevel(tc.s); got != tc.want {
+				t.Errorf("lossLevel = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStylerDisabled(t *testing.T) {
+	st := newStyler(false)
+	for _, l := range []level{levelNeutral, levelGood, levelWarn, levelCrit} {
+		if got := st.render("hello", l); got != "hello" {
+			t.Errorf("disabled styler should be a no-op, got %q for level %d", got, l)
+		}
+	}
+}
+
+func TestStylerEnabledAddsANSI(t *testing.T) {
+	// lipgloss strips colors when stdout isn't a TTY (which it isn't
+	// under `go test`). Force ANSI so the renderer actually emits codes.
+	old := lipgloss.DefaultRenderer().ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI)
+	defer lipgloss.SetColorProfile(old)
+
+	st := newStyler(true)
+	if got := st.render("hello", levelNeutral); got != "hello" {
+		t.Errorf("neutral should bypass coloring even when enabled, got %q", got)
+	}
+	for _, l := range []level{levelGood, levelWarn, levelCrit} {
+		got := st.render("hello", l)
+		if !strings.Contains(got, "\x1b[") {
+			t.Errorf("level %d should add ANSI escape, got %q", l, got)
+		}
+		if !strings.Contains(got, "hello") {
+			t.Errorf("level %d should preserve original text, got %q", l, got)
+		}
+	}
+}

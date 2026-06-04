@@ -33,6 +33,8 @@ func run() error {
 	var keepDropped bool
 	flag.BoolVar(&keepDropped, "keep-dropped", false, "keep dropped rows in the table (final stats stay visible)")
 	flag.BoolVar(&keepDropped, "k", false, "alias for --keep-dropped")
+	var noColor bool
+	flag.BoolVar(&noColor, "no-color", false, "disable color output (NO_COLOR env var also honored)")
 	size := flag.Int("size", 24, "ICMP payload size in bytes")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: pingtop [flags] <target>...\n\n")
@@ -85,7 +87,10 @@ func run() error {
 		}()
 	}
 
-	prog := tea.NewProgram(ui.New(ids, updates, keepDropped), tea.WithAltScreen())
+	// Per the NO_COLOR spec (no-color.org), any non-empty value of the
+	// env var disables color — including "0". Don't strconv-parse it.
+	colorize := !noColor && os.Getenv("NO_COLOR") == ""
+	prog := tea.NewProgram(ui.New(ids, updates, keepDropped, colorize), tea.WithAltScreen())
 	_, runErr := prog.Run()
 
 	cancel()
