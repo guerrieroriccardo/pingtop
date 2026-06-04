@@ -479,3 +479,39 @@ func TestStylerEnabledAddsANSI(t *testing.T) {
 		}
 	}
 }
+
+func TestVisibleColumns(t *testing.T) {
+	// Headers in tier order so the assertions read naturally.
+	const (
+		full     = "TARGET,RTT,MIN,AVG,MAX,JITTER,LOSS%,SENT/LOST,SPARK"
+		noMMM    = "TARGET,RTT,JITTER,LOSS%,SENT/LOST,SPARK"
+		noSent   = "TARGET,RTT,JITTER,LOSS%,SPARK"
+		noSpark  = "TARGET,RTT,JITTER,LOSS%"
+	)
+	for _, tc := range []struct {
+		name      string
+		termWidth int
+		want      string
+	}{
+		{"unset: render all", 0, full},
+		{"exactly fits all", 120, full},
+		{"one shy of all: drop MIN/AVG/MAX", 119, noMMM},
+		{"fits without MIN/AVG/MAX", 90, noMMM},
+		{"one shy: drop SENT/LOST too", 89, noSent},
+		{"fits without SENT/LOST", 78, noSent},
+		{"one shy: drop SPARK too", 77, noSpark},
+		{"fits at minimum", 56, noSpark},
+		{"narrower than minimum: stay at 4", 30, noSpark},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			idx := visibleColumns(tc.termWidth)
+			got := make([]string, len(idx))
+			for i, ci := range idx {
+				got[i] = columns[ci].header
+			}
+			if joined := strings.Join(got, ","); joined != tc.want {
+				t.Errorf("termWidth=%d:\n got=%q\nwant=%q", tc.termWidth, joined, tc.want)
+			}
+		})
+	}
+}

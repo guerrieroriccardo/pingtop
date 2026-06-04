@@ -13,11 +13,27 @@ import (
 	"github.com/guerrieroriccardo/pingtop/internal/pinger"
 )
 
-// Column widths are fixed; lipgloss/table reads them from the StyleFunc
-// via lipgloss.Style.GetWidth(). Order matches the cells emitted by
-// buildRows.
-var columnWidths = []int{28, 10, 10, 10, 10, 10, 8, 12, sparkWidth + 2}
-var columnHeaders = []string{"TARGET", "RTT", "MIN", "AVG", "MAX", "JITTER", "LOSS%", "SENT/LOST", "SPARK"}
+// columnDef describes one table column. Order in the columns slice
+// matches the cells emitted by buildRows. tier drives responsive
+// hiding: tier 0 columns are always shown; higher-tier columns are
+// dropped first when the terminal is too narrow to fit them all.
+type columnDef struct {
+	header string
+	width  int
+	tier   int
+}
+
+var columns = []columnDef{
+	{header: "TARGET", width: 28, tier: 0},
+	{header: "RTT", width: 10, tier: 0},
+	{header: "MIN", width: 10, tier: 3},
+	{header: "AVG", width: 10, tier: 3},
+	{header: "MAX", width: 10, tier: 3},
+	{header: "JITTER", width: 10, tier: 0},
+	{header: "LOSS%", width: 8, tier: 0},
+	{header: "SENT/LOST", width: 12, tier: 2},
+	{header: "SPARK", width: sparkWidth + 2, tier: 1},
+}
 
 // statsMsg wraps a StatsUpdate so it can flow through the Bubble Tea
 // message bus without exposing pinger types as a top-level tea.Msg.
@@ -30,6 +46,7 @@ type Model struct {
 	updates     <-chan pinger.StatsUpdate
 	stats       map[string]pinger.StatsUpdate
 	history     map[string][]time.Duration // per-target RTT ring buffer for the sparkline
+	termWidth   int                        // last WindowSizeMsg width; 0 until first event (renders all columns)
 	termHeight  int                        // last WindowSizeMsg height; 0 until first event
 	offset      int                        // first row index shown when content overflows viewport
 	filterMode  bool                       // true while user is typing into the filter
@@ -149,6 +166,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.WindowSizeMsg:
+		m.termWidth = msg.Width
 		m.termHeight = msg.Height
 		clampOffset(&m)
 		return m, nil
@@ -178,7 +196,22 @@ func (m Model) View() string {
 // is a stateless renderer, not a Bubble Tea component, so we rebuild from
 // current model state rather than holding a long-lived table instance.
 func (m Model) renderTable() string {
-	rows := buildRows(m.visibleIDs(), m.stats, m.history, m.styler)
+	visible := visibleColumns(m.termWidth)
+	fullRows := buildRows(m.visibleIDs(), m.stats, m.history, m.styler)
+
+	headers := make([]string, len(visible))
+	for i, ci := range visible {
+		headers[i] = columns[ci].header
+	}
+	rows := make([][]string, len(fullRows))
+	for r, row := range fullRows {
+		cells := make([]string, len(visible))
+		for i, ci := range visible {
+			cells[i] = row[ci]
+		}
+		rows[r] = cells
+	}
+
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	t := table.New().
 		Border(lipgloss.NormalBorder()).
@@ -189,12 +222,13 @@ func (m Model) renderTable() string {
 		BorderColumn(false).
 		BorderHeader(true).
 		BorderStyle(dim).
-		Headers(columnHeaders...).
+		Headers(headers...).
 		Rows(rows...).
 		StyleFunc(func(row, col int) lipgloss.Style {
+			origCol := visible[col]
 			s := lipgloss.NewStyle().
-				Width(columnWidths[col]).
-				MaxWidth(columnWidths[col]).
+				Width(columns[origCol].width).
+				MaxWidth(columns[origCol].width).
 				PaddingRight(1)
 			if row == table.HeaderRow {
 				s = s.Bold(true)
@@ -432,6 +466,51 @@ func clampOffset(m *Model) {
 	if m.offset < 0 {
 		m.offset = 0
 	}
+}
+
+// visibleColumns returns the indices into `columns` that fit within
+// termWidth, dropping by tier (highest tier first) until they fit or
+// only tier-0 columns remain. termWidth <= 0 means the program hasn't
+// received a WindowSizeMsg yet; render every column so the first frame
+// isn't accidentally truncated.
+func visibleColumns(termWidth int) []int {
+	if termWidth <= 0 {
+		idx := make([]int, len(columns))
+		for i := range idx {
+			idx[i] = i
+		}
+		return idx
+	}
+	hidden := make(map[int]bool)
+	total := func() int {
+		sum := 0
+		for i, c := range columns {
+			if !hidden[i] {
+				sum += c.width
+			}
+		}
+		return sum
+	}
+	maxTier := 0
+	for _, c := range columns {
+		if c.tier > maxTier {
+			maxTier = c.tier
+		}
+	}
+	for tier := maxTier; tier > 0 && total() > termWidth; tier-- {
+		for i, c := range columns {
+			if c.tier == tier {
+				hidden[i] = true
+			}
+		}
+	}
+	out := make([]int, 0, len(columns))
+	for i := range columns {
+		if !hidden[i] {
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 func removeID(order []string, id string) []string {
