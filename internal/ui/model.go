@@ -169,7 +169,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
 		clampOffset(&m)
-		return m, nil
+		// Resize cycles drop/add columns, which makes individual rows
+		// expand or contract horizontally. Bubble Tea's diff renderer
+		// can leave stale fragments visible during rapid resizes, so
+		// force a clean repaint on every WindowSizeMsg.
+		return m, tea.ClearScreen
 	}
 	return m, nil
 }
