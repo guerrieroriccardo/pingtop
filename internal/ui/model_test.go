@@ -107,6 +107,30 @@ func TestBuildRowsInitial(t *testing.T) {
 	}
 }
 
+func TestScrollWithinBounds(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate)
+	m := New([]string{"a", "b", "c", "d", "e"}, updates, false)
+	m.termHeight = 5 // 5 lines total: 1 help + 2 header = 2 available data rows.
+
+	// First down arrow scrolls; further presses cap at maxOffset.
+	for i := 0; i < 10; i++ {
+		mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = mm.(Model)
+	}
+	if m.offset != m.maxOffset() {
+		t.Errorf("expected offset to clamp at maxOffset=%d, got %d", m.maxOffset(), m.offset)
+	}
+
+	// Up arrow walks it back to 0 and stays there.
+	for i := 0; i < 20; i++ {
+		mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+		m = mm.(Model)
+	}
+	if m.offset != 0 {
+		t.Errorf("expected offset to clamp at 0 after up-spam, got %d", m.offset)
+	}
+}
+
 func TestUpdateApplyingStatsMsg(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate, 4)
 	m := New([]string{"1.1.1.1", "8.8.8.8"}, updates, false)
@@ -361,3 +385,4 @@ func TestFilterUpdateOnSlashKey(t *testing.T) {
 		t.Errorf("expected filter cleared after esc, got %q", out.filter)
 	}
 }
+
