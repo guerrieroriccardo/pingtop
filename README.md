@@ -91,7 +91,7 @@ pingtop 10.0.0.0/27 1.1.1.1 8.8.8.8
 | Key | Action |
 |-----|--------|
 | `↑` / `↓`, `k` / `j` | Scroll the table |
-| `s` | Cycle the sort column among visible columns; press again past the last to clear |
+| `s` / `S` | Cycle the sort column forward (`s`) or backward (`S`) among visible columns; past the last entry clears the sort |
 | `r` | Reverse the sort direction (no-op when unsorted) |
 | `/` | Start a live filter |
 | `enter` | Apply the filter (stay filtered, exit edit mode) |

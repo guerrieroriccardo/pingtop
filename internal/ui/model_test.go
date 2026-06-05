@@ -593,6 +593,20 @@ func TestSortCycleVisitsAllSortableColumns(t *testing.T) {
 	}
 }
 
+func TestSortCycleBackwardsThroughAllColumns(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate)
+	m := New([]string{"a"}, updates, false, false)
+	// From -1, S should jump to the last sortable column and walk back.
+	want := []int{6, 5, 4, 3, 2, 1, 0, -1, 6}
+	for i, w := range want {
+		mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'S'}})
+		m = mm.(Model)
+		if m.sortCol != w {
+			t.Errorf("press %d: sortCol=%d, want %d", i+1, m.sortCol, w)
+		}
+	}
+}
+
 func TestSortCycleSkipsHiddenColumns(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate)
 	m := New([]string{"a"}, updates, false, false)

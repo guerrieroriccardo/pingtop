@@ -176,6 +176,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sortCol = nextSortCol(m.sortCol, visibleSortable(m.termWidth))
 			clampOffset(&m)
 			return m, nil
+		case "S":
+			m.sortCol = prevSortCol(m.sortCol, visibleSortable(m.termWidth))
+			clampOffset(&m)
+			return m, nil
 		case "r":
 			if m.sortCol >= 0 {
 				m.sortDesc = !m.sortDesc
@@ -212,10 +216,10 @@ func (m Model) View() string {
 	case m.filter != "":
 		text = fmt.Sprintf("filter: %s  [/] edit  [esc] clear  [q] quit", m.filter)
 	case m.sortCol >= 0:
-		text = fmt.Sprintf("[q] quit  [/] filter  [↑/↓] scroll  [s] sort: %s %s  [r] reverse",
+		text = fmt.Sprintf("[q] quit  [/] filter  [↑/↓] scroll  [s/S] sort: %s %s  [r] reverse",
 			sortName(m.sortCol), sortArrow(m.sortDesc))
 	default:
-		text = "[q] quit  [/] filter  [↑/↓] scroll  [s] sort"
+		text = "[q] quit  [/] filter  [↑/↓] scroll  [s/S] sort"
 	}
 	help := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("241")).
@@ -658,6 +662,24 @@ func nextSortCol(current int, sortable []int) int {
 		}
 	}
 	return sortable[0]
+}
+
+// prevSortCol walks sortable in reverse, mirroring nextSortCol. From -1
+// (or a hidden column) it jumps to the last entry; from the first entry
+// it wraps back to -1.
+func prevSortCol(current int, sortable []int) int {
+	if len(sortable) == 0 {
+		return -1
+	}
+	for i, ci := range sortable {
+		if ci == current {
+			if i > 0 {
+				return sortable[i-1]
+			}
+			return -1
+		}
+	}
+	return sortable[len(sortable)-1]
 }
 
 // columnVisible reports whether the given column index is currently on
