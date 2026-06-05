@@ -62,6 +62,29 @@ pingtop -k -d 5 192.168.1.0/27
 Unreachable hosts stay in the table with `100.0%` loss and `5/5` SENT/LOST so
 the whole scan result is on screen.
 
+### Sort by column
+
+Press `s` to cycle the sort column forward through the **visible**
+columns, `S` to cycle backward, and `r` to flip the direction. After the
+last entry the cycle clears, leaving the rows in their original order.
+
+```sh
+pingtop 1.1.1.1 8.8.8.8 9.9.9.9 example.com
+# inside the UI:
+#   s → sorted by TARGET (default direction: descending)
+#   r → flips to ascending
+#   s → advances to RTT (direction is sticky)
+#   s ... → walks through MIN, AVG, MAX, JITTER, LOSS%, then clears
+#   S → cycle backward
+```
+
+![sort demo](docs/sort.gif)
+
+The active column shows a `↓` or `↑` arrow on its header and the bottom
+bar reflects the current key + direction. If the terminal is too narrow
+to display the active sort column, the sort silently resets — pick it
+again with `s`.
+
 ### Filter rows live
 
 Press `/` to start filtering by substring (case-insensitive). The filter
@@ -113,7 +136,7 @@ Grab the right archive from [the latest release](https://github.com/guerrieroric
 extract, and put `pingtop` somewhere on your `$PATH`. Example:
 
 ```sh
-curl -sL https://github.com/guerrieroriccardo/pingtop/releases/latest/download/pingtop_0.8.0_linux_amd64.tar.gz | tar xz
+curl -sL https://github.com/guerrieroriccardo/pingtop/releases/latest/download/pingtop_0.13.0_linux_amd64.tar.gz | tar xz
 sudo install -m 755 pingtop /usr/local/bin/
 ```
 

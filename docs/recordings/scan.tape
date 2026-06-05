@@ -11,7 +11,7 @@ Set Height 500
 Set Theme "Catppuccin Mocha"
 Set TypingSpeed 50ms
 
-Type "./pingtop -d 5 192.0.2.0/29"
+Type "./pingtop -d 5 192.0.2.0/29 8.8.8.8"
 Sleep 2s
 Enter
 Sleep 8s
