@@ -487,7 +487,7 @@ func TestSortIDsByRTT(t *testing.T) {
 	m.stats["mid"] = pinger.StatsUpdate{RTT: 50 * time.Millisecond, Sent: 1, Recv: 1}
 	m.stats["slow"] = pinger.StatsUpdate{RTT: 500 * time.Millisecond, Sent: 1, Recv: 1}
 
-	m.sortKey = 1
+	m.sortCol = 1 // RTT
 	m.sortDesc = true
 	got := m.visibleIDs()
 	want := []string{"slow", "mid", "fast", "nodata"}
@@ -510,7 +510,7 @@ func TestSortIDsByLoss(t *testing.T) {
 	m.stats["halflost"] = pinger.StatsUpdate{Sent: 10, Recv: 5}
 	m.stats["alllost"] = pinger.StatsUpdate{Sent: 10, Recv: 0}
 
-	m.sortKey = 2
+	m.sortCol = 6 // LOSS%
 	m.sortDesc = true
 	got := m.visibleIDs()
 	want := []string{"alllost", "halflost", "clean", "nodata"}
@@ -526,6 +526,44 @@ func TestSortIDsByLoss(t *testing.T) {
 	}
 }
 
+func TestSortIDsByTarget(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate)
+	// Insertion order intentionally not alphabetical so we can tell
+	// TARGET-sort from passthrough.
+	m := New([]string{"charlie", "alpha", "bravo"}, updates, false, false)
+
+	m.sortCol = 0 // TARGET
+	m.sortDesc = false
+	got := m.visibleIDs()
+	want := []string{"alpha", "bravo", "charlie"}
+	if !equalSlice(got, want) {
+		t.Errorf("target asc: got %v, want %v", got, want)
+	}
+
+	m.sortDesc = true
+	got = m.visibleIDs()
+	want = []string{"charlie", "bravo", "alpha"}
+	if !equalSlice(got, want) {
+		t.Errorf("target desc: got %v, want %v", got, want)
+	}
+}
+
+func TestSortIDsByJitter(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate)
+	m := New([]string{"steady", "spiky", "mid"}, updates, false, false)
+	m.stats["steady"] = pinger.StatsUpdate{Jitter: 1 * time.Millisecond, Sent: 1, Recv: 1}
+	m.stats["mid"] = pinger.StatsUpdate{Jitter: 10 * time.Millisecond, Sent: 1, Recv: 1}
+	m.stats["spiky"] = pinger.StatsUpdate{Jitter: 100 * time.Millisecond, Sent: 1, Recv: 1}
+
+	m.sortCol = 5 // JITTER
+	m.sortDesc = true
+	got := m.visibleIDs()
+	want := []string{"spiky", "mid", "steady"}
+	if !equalSlice(got, want) {
+		t.Errorf("jitter desc: got %v, want %v", got, want)
+	}
+}
+
 func TestSortIDsNoneIsPassthrough(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate)
 	m := New([]string{"b", "a", "c"}, updates, false, false)
@@ -536,21 +574,66 @@ func TestSortIDsNoneIsPassthrough(t *testing.T) {
 	got := m.visibleIDs()
 	want := []string{"b", "a", "c"}
 	if !equalSlice(got, want) {
-		t.Errorf("sortKey=0 should be passthrough: got %v, want %v", got, want)
+		t.Errorf("sortCol=-1 should be passthrough: got %v, want %v", got, want)
 	}
 }
 
-func TestSortKeyCycles(t *testing.T) {
+func TestSortCycleVisitsAllSortableColumns(t *testing.T) {
 	updates := make(chan pinger.StatsUpdate)
 	m := New([]string{"a"}, updates, false, false)
-
-	want := []int{1, 2, 0, 1}
+	// termWidth=0 means visibleColumns returns all columns, so the cycle
+	// should walk every sortable column index then wrap to -1.
+	want := []int{0, 1, 2, 3, 4, 5, 6, -1, 0}
 	for i, w := range want {
 		mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 		m = mm.(Model)
-		if m.sortKey != w {
-			t.Errorf("press %d: sortKey=%d, want %d", i+1, m.sortKey, w)
+		if m.sortCol != w {
+			t.Errorf("press %d: sortCol=%d, want %d", i+1, m.sortCol, w)
 		}
+	}
+}
+
+func TestSortCycleSkipsHiddenColumns(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate)
+	m := New([]string{"a"}, updates, false, false)
+	// At termWidth=70 the responsive layout hides MIN/AVG/MAX (tier 3)
+	// AND SENT/LOST (tier 2). Remaining sortable visible columns are
+	// TARGET(0), RTT(1), JITTER(5), LOSS%(6). SPARK is visible but not
+	// sortable and should be skipped.
+	m.termWidth = 70
+	want := []int{0, 1, 5, 6, -1, 0}
+	for i, w := range want {
+		mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+		m = mm.(Model)
+		if m.sortCol != w {
+			t.Errorf("press %d: sortCol=%d, want %d", i+1, m.sortCol, w)
+		}
+	}
+}
+
+func TestSortRevertsOnResizeHidingColumn(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate)
+	m := New([]string{"a"}, updates, false, false)
+	// Sort on MIN (col 2, tier 3), then resize narrow enough to hide
+	// tier-3 columns. Sort should clear.
+	m.sortCol = 2
+	mm, _ := m.Update(tea.WindowSizeMsg{Width: 70, Height: 24})
+	m = mm.(Model)
+	if m.sortCol != -1 {
+		t.Errorf("hiding active sort column should revert sortCol to -1, got %d", m.sortCol)
+	}
+}
+
+func TestSortSurvivesResizeKeepingColumn(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate)
+	m := New([]string{"a"}, updates, false, false)
+	// Sort on RTT (col 1, tier 0 — always visible). Even a narrow resize
+	// should keep the sort active.
+	m.sortCol = 1
+	mm, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 24})
+	m = mm.(Model)
+	if m.sortCol != 1 {
+		t.Errorf("tier-0 sort should survive resize, got sortCol=%d", m.sortCol)
 	}
 }
 
@@ -567,7 +650,7 @@ func TestSortDirToggle(t *testing.T) {
 	}
 
 	// Engage a sort, then r flips direction each press.
-	m.sortKey = 1
+	m.sortCol = 1
 	mm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m = mm.(Model)
 	if m.sortDesc == startDesc {

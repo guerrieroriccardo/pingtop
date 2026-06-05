@@ -18,22 +18,27 @@ import (
 // matches the cells emitted by buildRows. tier drives responsive
 // hiding: tier 0 columns are always shown; higher-tier columns are
 // dropped first when the terminal is too narrow to fit them all.
+// sortable=true means the column participates in the `s` sort cycle.
 type columnDef struct {
-	header string
-	width  int
-	tier   int
+	header   string
+	width    int
+	tier     int
+	sortable bool
 }
 
+// SENT/LOST is intentionally non-sortable: its only meaningful scalar
+// is loss%, which the LOSS% column already covers — having both in the
+// cycle would produce two identical orderings. SPARK has no scalar.
 var columns = []columnDef{
-	{header: "TARGET", width: 28, tier: 0},
-	{header: "RTT", width: 10, tier: 0},
-	{header: "MIN", width: 10, tier: 3},
-	{header: "AVG", width: 10, tier: 3},
-	{header: "MAX", width: 10, tier: 3},
-	{header: "JITTER", width: 10, tier: 0},
-	{header: "LOSS%", width: 8, tier: 0},
-	{header: "SENT/LOST", width: 12, tier: 2},
-	{header: "SPARK", width: sparkWidth + 2, tier: 1},
+	{header: "TARGET", width: 28, tier: 0, sortable: true},
+	{header: "RTT", width: 10, tier: 0, sortable: true},
+	{header: "MIN", width: 10, tier: 3, sortable: true},
+	{header: "AVG", width: 10, tier: 3, sortable: true},
+	{header: "MAX", width: 10, tier: 3, sortable: true},
+	{header: "JITTER", width: 10, tier: 0, sortable: true},
+	{header: "LOSS%", width: 8, tier: 0, sortable: true},
+	{header: "SENT/LOST", width: 12, tier: 2, sortable: false},
+	{header: "SPARK", width: sparkWidth + 2, tier: 1, sortable: false},
 }
 
 // statsMsg wraps a StatsUpdate so it can flow through the Bubble Tea
@@ -52,8 +57,8 @@ type Model struct {
 	offset      int                        // first row index shown when content overflows viewport
 	filterMode  bool                       // true while user is typing into the filter
 	filter      string                     // active filter; empty == no filter
-	sortKey     int                        // 0=none (insertion order), 1=rtt, 2=loss
-	sortDesc    bool                       // direction when sortKey != 0; default true (worst first)
+	sortCol     int                        // -1 = no sort (insertion order); otherwise index into columns
+	sortDesc    bool                       // direction when sortCol >= 0; default true (worst first)
 	keepDropped bool                       // if true, dropped rows stay visible with final stats
 	styler      styler                     // colors for RTT/JITTER/LOSS%; disabled styler is a no-op
 }
@@ -70,6 +75,7 @@ func New(ids []string, updates <-chan pinger.StatsUpdate, keepDropped, colorize 
 		updates:     updates,
 		stats:       make(map[string]pinger.StatsUpdate, len(ids)),
 		history:     make(map[string][]time.Duration, len(ids)),
+		sortCol:     -1,
 		sortDesc:    true,
 		keepDropped: keepDropped,
 		styler:      newStyler(colorize),
@@ -167,11 +173,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "s":
-			m.sortKey = (m.sortKey + 1) % 3
+			m.sortCol = nextSortCol(m.sortCol, visibleSortable(m.termWidth))
 			clampOffset(&m)
 			return m, nil
 		case "r":
-			if m.sortKey != 0 {
+			if m.sortCol >= 0 {
 				m.sortDesc = !m.sortDesc
 			}
 			return m, nil
@@ -181,6 +187,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
+		// If the active sort column just got hidden by the resize, drop
+		// the sort. Predictable state beats invisible sort.
+		if m.sortCol >= 0 && !columnVisible(m.sortCol, m.termWidth) {
+			m.sortCol = -1
+		}
 		clampOffset(&m)
 		// Resize cycles drop/add columns, which makes individual rows
 		// expand or contract horizontally. Bubble Tea's diff renderer
@@ -200,9 +211,9 @@ func (m Model) View() string {
 		text = "no hosts reachable — [q] quit"
 	case m.filter != "":
 		text = fmt.Sprintf("filter: %s  [/] edit  [esc] clear  [q] quit", m.filter)
-	case m.sortKey != 0:
+	case m.sortCol >= 0:
 		text = fmt.Sprintf("[q] quit  [/] filter  [↑/↓] scroll  [s] sort: %s %s  [r] reverse",
-			sortName(m.sortKey), sortArrow(m.sortDesc))
+			sortName(m.sortCol), sortArrow(m.sortDesc))
 	default:
 		text = "[q] quit  [/] filter  [↑/↓] scroll  [s] sort"
 	}
@@ -223,18 +234,12 @@ func (m Model) renderTable() string {
 	for i, ci := range visible {
 		headers[i] = columns[ci].header
 	}
-	// Decorate the active sort column's header. RTT and LOSS% are both
-	// tier-0 so the arrow never lands on a hidden column.
-	sortCol := -1
-	switch m.sortKey {
-	case 1:
-		sortCol = 1 // RTT
-	case 2:
-		sortCol = 6 // LOSS%
-	}
-	if sortCol >= 0 {
+	// Decorate the active sort column's header. The WindowSizeMsg arm
+	// already reset sortCol to -1 if the column got hidden, so an arrow
+	// here always lands on a visible column.
+	if m.sortCol >= 0 {
 		for i, ci := range visible {
-			if ci == sortCol {
+			if ci == m.sortCol {
 				headers[i] += " " + sortArrow(m.sortDesc)
 			}
 		}
@@ -282,12 +287,12 @@ func (m Model) renderTable() string {
 }
 
 // visibleIDs returns m.order filtered by m.filter (case-insensitive
-// substring) and then sorted by m.sortKey. When the filter is empty and
+// substring) and then sorted by m.sortCol. When the filter is empty and
 // no sort is active, it returns m.order directly.
 func (m Model) visibleIDs() []string {
 	var out []string
 	if m.filter == "" {
-		if m.sortKey == 0 {
+		if m.sortCol < 0 {
 			return m.order
 		}
 		out = append(out, m.order...)
@@ -300,7 +305,18 @@ func (m Model) visibleIDs() []string {
 			}
 		}
 	}
-	if m.sortKey == 0 {
+	if m.sortCol < 0 {
+		return out
+	}
+	// TARGET sort works on the ID string and doesn't need stats — keep
+	// it out of the missing-stats sink path so every row gets compared.
+	if m.sortCol == 0 {
+		sort.SliceStable(out, func(i, j int) bool {
+			if m.sortDesc {
+				return out[i] > out[j]
+			}
+			return out[i] < out[j]
+		})
 		return out
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -317,10 +333,18 @@ func (m Model) visibleIDs() []string {
 			return true
 		}
 		var less bool
-		switch m.sortKey {
+		switch m.sortCol {
 		case 1:
 			less = si.RTT < sj.RTT
 		case 2:
+			less = si.MinRTT < sj.MinRTT
+		case 3:
+			less = si.AvgRTT < sj.AvgRTT
+		case 4:
+			less = si.MaxRTT < sj.MaxRTT
+		case 5:
+			less = si.Jitter < sj.Jitter
+		case 6:
 			less = lossPct(si) < lossPct(sj)
 		}
 		if m.sortDesc {
@@ -592,14 +616,11 @@ func visibleColumns(termWidth int) []int {
 	return out
 }
 
-func sortName(k int) string {
-	switch k {
-	case 1:
-		return "rtt"
-	case 2:
-		return "loss"
+func sortName(col int) string {
+	if col < 0 || col >= len(columns) {
+		return ""
 	}
-	return ""
+	return strings.ToLower(columns[col].header)
 }
 
 func sortArrow(desc bool) string {
@@ -607,6 +628,47 @@ func sortArrow(desc bool) string {
 		return "↓"
 	}
 	return "↑"
+}
+
+// visibleSortable returns the indices of columns that are both
+// currently visible (per termWidth) and marked sortable.
+func visibleSortable(termWidth int) []int {
+	out := []int{}
+	for _, ci := range visibleColumns(termWidth) {
+		if columns[ci].sortable {
+			out = append(out, ci)
+		}
+	}
+	return out
+}
+
+// nextSortCol advances current through sortable, wrapping to -1 after
+// the last entry. If current is -1 or not in sortable (because it just
+// got hidden), restart at the first entry.
+func nextSortCol(current int, sortable []int) int {
+	if len(sortable) == 0 {
+		return -1
+	}
+	for i, ci := range sortable {
+		if ci == current {
+			if i+1 < len(sortable) {
+				return sortable[i+1]
+			}
+			return -1
+		}
+	}
+	return sortable[0]
+}
+
+// columnVisible reports whether the given column index is currently on
+// screen given termWidth.
+func columnVisible(col, termWidth int) bool {
+	for _, ci := range visibleColumns(termWidth) {
+		if ci == col {
+			return true
+		}
+	}
+	return false
 }
 
 func removeID(order []string, id string) []string {
