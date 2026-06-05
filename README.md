@@ -91,6 +91,8 @@ pingtop 10.0.0.0/27 1.1.1.1 8.8.8.8
 | Key | Action |
 |-----|--------|
 | `↑` / `↓`, `k` / `j` | Scroll the table |
+| `s` | Cycle the sort column: none → RTT → LOSS% → none |
+| `r` | Reverse the sort direction (no-op when unsorted) |
 | `/` | Start a live filter |
 | `enter` | Apply the filter (stay filtered, exit edit mode) |
 | `esc` | Clear an active filter |

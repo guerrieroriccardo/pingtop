@@ -3,6 +3,7 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -51,6 +52,8 @@ type Model struct {
 	offset      int                        // first row index shown when content overflows viewport
 	filterMode  bool                       // true while user is typing into the filter
 	filter      string                     // active filter; empty == no filter
+	sortKey     int                        // 0=none (insertion order), 1=rtt, 2=loss
+	sortDesc    bool                       // direction when sortKey != 0; default true (worst first)
 	keepDropped bool                       // if true, dropped rows stay visible with final stats
 	styler      styler                     // colors for RTT/JITTER/LOSS%; disabled styler is a no-op
 }
@@ -67,6 +70,7 @@ func New(ids []string, updates <-chan pinger.StatsUpdate, keepDropped, colorize 
 		updates:     updates,
 		stats:       make(map[string]pinger.StatsUpdate, len(ids)),
 		history:     make(map[string][]time.Duration, len(ids)),
+		sortDesc:    true,
 		keepDropped: keepDropped,
 		styler:      newStyler(colorize),
 	}
@@ -162,6 +166,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.offset++
 			}
 			return m, nil
+		case "s":
+			m.sortKey = (m.sortKey + 1) % 3
+			clampOffset(&m)
+			return m, nil
+		case "r":
+			if m.sortKey != 0 {
+				m.sortDesc = !m.sortDesc
+			}
+			return m, nil
 		}
 		return m, nil
 
@@ -187,8 +200,11 @@ func (m Model) View() string {
 		text = "no hosts reachable — [q] quit"
 	case m.filter != "":
 		text = fmt.Sprintf("filter: %s  [/] edit  [esc] clear  [q] quit", m.filter)
+	case m.sortKey != 0:
+		text = fmt.Sprintf("[q] quit  [/] filter  [↑/↓] scroll  [s] sort: %s %s  [r] reverse",
+			sortName(m.sortKey), sortArrow(m.sortDesc))
 	default:
-		text = "[q] quit  [/] filter  [↑/↓] scroll"
+		text = "[q] quit  [/] filter  [↑/↓] scroll  [s] sort"
 	}
 	help := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("241")).
@@ -206,6 +222,22 @@ func (m Model) renderTable() string {
 	headers := make([]string, len(visible))
 	for i, ci := range visible {
 		headers[i] = columns[ci].header
+	}
+	// Decorate the active sort column's header. RTT and LOSS% are both
+	// tier-0 so the arrow never lands on a hidden column.
+	sortCol := -1
+	switch m.sortKey {
+	case 1:
+		sortCol = 1 // RTT
+	case 2:
+		sortCol = 6 // LOSS%
+	}
+	if sortCol >= 0 {
+		for i, ci := range visible {
+			if ci == sortCol {
+				headers[i] += " " + sortArrow(m.sortDesc)
+			}
+		}
 	}
 	rows := make([][]string, len(fullRows))
 	for r, row := range fullRows {
@@ -250,18 +282,52 @@ func (m Model) renderTable() string {
 }
 
 // visibleIDs returns m.order filtered by m.filter (case-insensitive
-// substring). When the filter is empty, it returns m.order directly.
+// substring) and then sorted by m.sortKey. When the filter is empty and
+// no sort is active, it returns m.order directly.
 func (m Model) visibleIDs() []string {
+	var out []string
 	if m.filter == "" {
-		return m.order
-	}
-	f := strings.ToLower(m.filter)
-	out := make([]string, 0, len(m.order))
-	for _, id := range m.order {
-		if strings.Contains(strings.ToLower(id), f) {
-			out = append(out, id)
+		if m.sortKey == 0 {
+			return m.order
+		}
+		out = append(out, m.order...)
+	} else {
+		f := strings.ToLower(m.filter)
+		out = make([]string, 0, len(m.order))
+		for _, id := range m.order {
+			if strings.Contains(strings.ToLower(id), f) {
+				out = append(out, id)
+			}
 		}
 	}
+	if m.sortKey == 0 {
+		return out
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		si, oki := m.stats[out[i]]
+		sj, okj := m.stats[out[j]]
+		// Targets without stats sink to the bottom regardless of direction.
+		if !oki && !okj {
+			return false
+		}
+		if !oki {
+			return false
+		}
+		if !okj {
+			return true
+		}
+		var less bool
+		switch m.sortKey {
+		case 1:
+			less = si.RTT < sj.RTT
+		case 2:
+			less = lossPct(si) < lossPct(sj)
+		}
+		if m.sortDesc {
+			return !less
+		}
+		return less
+	})
 	return out
 }
 
@@ -322,6 +388,15 @@ func formatLoss(s pinger.StatsUpdate) string {
 	}
 	pct := 100 * float64(s.Sent-s.Recv) / float64(s.Sent)
 	return fmt.Sprintf("%.1f%%", pct)
+}
+
+// lossPct returns the loss percentage for sort comparison. Returns -1
+// when Sent==0 so "no data" rows don't tie zero-loss winners.
+func lossPct(s pinger.StatsUpdate) float64 {
+	if s.Sent == 0 {
+		return -1
+	}
+	return 100 * float64(s.Sent-s.Recv) / float64(s.Sent)
 }
 
 func formatSentLost(s pinger.StatsUpdate) string {
@@ -515,6 +590,23 @@ func visibleColumns(termWidth int) []int {
 		}
 	}
 	return out
+}
+
+func sortName(k int) string {
+	switch k {
+	case 1:
+		return "rtt"
+	case 2:
+		return "loss"
+	}
+	return ""
+}
+
+func sortArrow(desc bool) string {
+	if desc {
+		return "↓"
+	}
+	return "↑"
 }
 
 func removeID(order []string, id string) []string {

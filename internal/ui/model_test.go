@@ -480,6 +480,118 @@ func TestStylerEnabledAddsANSI(t *testing.T) {
 	}
 }
 
+func TestSortIDsByRTT(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate)
+	m := New([]string{"slow", "fast", "mid", "nodata"}, updates, false, false)
+	m.stats["fast"] = pinger.StatsUpdate{RTT: 5 * time.Millisecond, Sent: 1, Recv: 1}
+	m.stats["mid"] = pinger.StatsUpdate{RTT: 50 * time.Millisecond, Sent: 1, Recv: 1}
+	m.stats["slow"] = pinger.StatsUpdate{RTT: 500 * time.Millisecond, Sent: 1, Recv: 1}
+
+	m.sortKey = 1
+	m.sortDesc = true
+	got := m.visibleIDs()
+	want := []string{"slow", "mid", "fast", "nodata"}
+	if !equalSlice(got, want) {
+		t.Errorf("rtt desc: got %v, want %v", got, want)
+	}
+
+	m.sortDesc = false
+	got = m.visibleIDs()
+	want = []string{"fast", "mid", "slow", "nodata"}
+	if !equalSlice(got, want) {
+		t.Errorf("rtt asc: got %v, want %v", got, want)
+	}
+}
+
+func TestSortIDsByLoss(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate)
+	m := New([]string{"halflost", "clean", "alllost", "nodata"}, updates, false, false)
+	m.stats["clean"] = pinger.StatsUpdate{Sent: 10, Recv: 10}
+	m.stats["halflost"] = pinger.StatsUpdate{Sent: 10, Recv: 5}
+	m.stats["alllost"] = pinger.StatsUpdate{Sent: 10, Recv: 0}
+
+	m.sortKey = 2
+	m.sortDesc = true
+	got := m.visibleIDs()
+	want := []string{"alllost", "halflost", "clean", "nodata"}
+	if !equalSlice(got, want) {
+		t.Errorf("loss desc: got %v, want %v", got, want)
+	}
+
+	m.sortDesc = false
+	got = m.visibleIDs()
+	want = []string{"clean", "halflost", "alllost", "nodata"}
+	if !equalSlice(got, want) {
+		t.Errorf("loss asc: got %v, want %v", got, want)
+	}
+}
+
+func TestSortIDsNoneIsPassthrough(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate)
+	m := New([]string{"b", "a", "c"}, updates, false, false)
+	m.stats["a"] = pinger.StatsUpdate{RTT: 1 * time.Millisecond, Sent: 1, Recv: 1}
+	m.stats["b"] = pinger.StatsUpdate{RTT: 99 * time.Millisecond, Sent: 1, Recv: 1}
+	m.stats["c"] = pinger.StatsUpdate{RTT: 50 * time.Millisecond, Sent: 1, Recv: 1}
+
+	got := m.visibleIDs()
+	want := []string{"b", "a", "c"}
+	if !equalSlice(got, want) {
+		t.Errorf("sortKey=0 should be passthrough: got %v, want %v", got, want)
+	}
+}
+
+func TestSortKeyCycles(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate)
+	m := New([]string{"a"}, updates, false, false)
+
+	want := []int{1, 2, 0, 1}
+	for i, w := range want {
+		mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+		m = mm.(Model)
+		if m.sortKey != w {
+			t.Errorf("press %d: sortKey=%d, want %d", i+1, m.sortKey, w)
+		}
+	}
+}
+
+func TestSortDirToggle(t *testing.T) {
+	updates := make(chan pinger.StatsUpdate)
+	m := New([]string{"a"}, updates, false, false)
+
+	// Unsorted: r is a no-op (sortDesc stays at the New() default).
+	startDesc := m.sortDesc
+	mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = mm.(Model)
+	if m.sortDesc != startDesc {
+		t.Errorf("r while unsorted should be no-op: sortDesc=%v, want %v", m.sortDesc, startDesc)
+	}
+
+	// Engage a sort, then r flips direction each press.
+	m.sortKey = 1
+	mm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = mm.(Model)
+	if m.sortDesc == startDesc {
+		t.Errorf("r while sorted should flip sortDesc, got %v", m.sortDesc)
+	}
+	mm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = mm.(Model)
+	if m.sortDesc != startDesc {
+		t.Errorf("second r should flip back, got %v", m.sortDesc)
+	}
+}
+
+func equalSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestVisibleColumns(t *testing.T) {
 	// Headers in tier order so the assertions read naturally.
 	const (
