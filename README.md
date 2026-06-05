@@ -83,13 +83,14 @@ pingtop 10.0.0.0/27 1.1.1.1 8.8.8.8
 | `-d`, `--drop` | `0` | Drop a target after N sends with no replies (0 = disabled) |
 | `-k`, `--keep-dropped` | `false` | Keep dropped rows visible with final stats instead of removing them |
 | `-m`, `--max-hosts` | `256` | Hard cap on the number of expanded targets |
+| `--no-color` | `false` | Disable color thresholds on RTT/JITTER/LOSS%. `NO_COLOR` env var is also honored |
 | `--size` | `24` | ICMP payload size in bytes |
 
 ## Keys
 
 | Key | Action |
 |-----|--------|
-| `↑` / `↓` | Scroll the table |
+| `↑` / `↓`, `k` / `j` | Scroll the table |
 | `/` | Start a live filter |
 | `enter` | Apply the filter (stay filtered, exit edit mode) |
 | `esc` | Clear an active filter |
