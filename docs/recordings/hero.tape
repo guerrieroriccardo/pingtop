@@ -6,7 +6,7 @@ Output docs/hero.gif
 
 Set Shell "bash"
 Set FontSize 14
-Set Width 1200
+Set Width 1400
 Set Height 700
 Set Theme "Catppuccin Mocha"
 Set TypingSpeed 50ms
