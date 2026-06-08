@@ -5,6 +5,7 @@ package target
 import (
 	"fmt"
 	"net/netip"
+	"net/url"
 	"strings"
 )
 
@@ -40,6 +41,13 @@ func Expand(args []string, maxHosts int) ([]Target, error) {
 		arg = strings.TrimSpace(arg)
 		if arg == "" {
 			continue
+		}
+		if strings.Contains(arg, "://") {
+			u, err := url.Parse(arg)
+			if err != nil || u.Hostname() == "" {
+				return nil, fmt.Errorf("invalid URL %q", arg)
+			}
+			arg = u.Hostname()
 		}
 
 		switch {

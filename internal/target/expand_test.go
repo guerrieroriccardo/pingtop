@@ -81,6 +81,27 @@ func TestExpand(t *testing.T) {
 			args: []string{"localhost"}, maxHosts: 10,
 			wantIDs: []string{"localhost"},
 		},
+		{
+			name: "https url stripped to host",
+			args: []string{"https://example.com/test"}, maxHosts: 10,
+			wantIDs: []string{"example.com"},
+		},
+		{
+			name: "http url with port and path",
+			args: []string{"http://example.com:8080/path?x=1"}, maxHosts: 10,
+			wantIDs: []string{"example.com"},
+		},
+		{
+			name: "url with ipv4 host",
+			args: []string{"https://1.1.1.1/admin"}, maxHosts: 10,
+			wantIDs: []string{"1.1.1.1"},
+		},
+		{
+			name: "url with bracketed ipv6 host",
+			args: []string{"https://[2001:db8::1]/"}, maxHosts: 10,
+			wantIDs: []string{"2001:db8::1"},
+		},
+		{name: "url with no host rejected", args: []string{"https:///path"}, maxHosts: 10, wantErr: true},
 		{name: "zero maxHosts rejected", args: []string{"1.1.1.1"}, maxHosts: 0, wantErr: true},
 	}
 
