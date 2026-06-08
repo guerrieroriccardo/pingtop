@@ -118,7 +118,8 @@ func prefixHostCount(p netip.Prefix) uint64 {
 
 // looksLikeHostname is a cheap syntactic check; actual DNS resolution
 // happens later in the pinger so transient resolver failures don't
-// block startup.
+// block startup. The final label must contain a non-digit so botched
+// IPs like "273.25.17.2555" don't slip through as "hostnames".
 func looksLikeHostname(s string) bool {
 	if s == "" || len(s) > 253 {
 		return false
@@ -136,5 +137,11 @@ func looksLikeHostname(s string) bool {
 			return false
 		}
 	}
-	return true
+	last := s[strings.LastIndex(s, ".")+1:]
+	for _, r := range last {
+		if r < '0' || r > '9' {
+			return true
+		}
+	}
+	return false
 }

@@ -68,6 +68,19 @@ func TestExpand(t *testing.T) {
 		{name: "over cap from singles", args: []string{"1.1.1.1", "1.1.1.2", "1.1.1.3"}, maxHosts: 2, wantErr: true},
 		{name: "invalid CIDR mask", args: []string{"10.0.0.0/99"}, maxHosts: 10, wantErr: true},
 		{name: "garbage arg", args: []string{"!!!"}, maxHosts: 10, wantErr: true},
+		{name: "malformed ipv4 rejected", args: []string{"273.25.17.2555"}, maxHosts: 10, wantErr: true},
+		{name: "truncated ipv4 rejected", args: []string{"192.168.1"}, maxHosts: 10, wantErr: true},
+		{name: "all-numeric label rejected", args: []string{"123"}, maxHosts: 10, wantErr: true},
+		{
+			name: "hostname starting with digit accepted",
+			args: []string{"1.example.com"}, maxHosts: 10,
+			wantIDs: []string{"1.example.com"},
+		},
+		{
+			name: "bare localhost accepted",
+			args: []string{"localhost"}, maxHosts: 10,
+			wantIDs: []string{"localhost"},
+		},
 		{name: "zero maxHosts rejected", args: []string{"1.1.1.1"}, maxHosts: 0, wantErr: true},
 	}
 
